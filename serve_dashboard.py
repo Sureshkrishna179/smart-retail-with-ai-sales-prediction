@@ -979,7 +979,7 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
 
 # ─── Main ──────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    PORT = 8080
+    PORT = int(os.getenv("PORT", 8080))
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
     print(f"\n{'='*50}")
     print(f"  SmartRetail AI -- Secure Server")
