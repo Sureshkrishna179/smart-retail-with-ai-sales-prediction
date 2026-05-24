@@ -189,6 +189,15 @@ def seed_products(cursor):
         # Cleaning
         ("Washing Powder 1kg", "Cleaning", "pack",  65.00, 110, 40),
         ("Dish Soap 500ml",    "Cleaning", "bottle", 45.00,  18, 40),  # LOW STOCK
+        # New Products Added
+        ("Milk 500ml",         "Dairy",    "packet", 30.00, 150, 40),
+        ("Curd 500g",          "Dairy",    "cup",    45.00,  80, 20),
+        ("Tata Salt 1kg",      "Grocery",  "packet", 28.00, 200, 50),
+        ("Sona Masuri Rice 5kg","Grocery",  "kg",    320.00,  90, 20),
+        ("Urad Dal 1kg",       "Grocery",  "kg",    120.00, 100, 30),
+        ("Coconut Oil 500ml",  "Grocery",  "bottle",140.00,  80, 25),
+        ("Cardamom 50g",       "Spices",   "pack",  110.00,  60, 15),
+        ("Garlic 250g",        "Grocery",  "pack",   60.00,  70, 20),
     ]
 
     cursor.executemany(

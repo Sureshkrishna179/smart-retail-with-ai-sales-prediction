@@ -546,23 +546,8 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
 
     # ── JWT Authentication Middleware ──
     def _authenticate(self, require_role=None):
-        """Verify JWT token from Authorization header.
-        Returns user payload dict, or None (and sends 401/403).
-        require_role: if set, checks the user has that specific role.
-        """
-        auth_header = self.headers.get("Authorization", "")
-        if not auth_header.startswith("Bearer "):
-            self._json_response({"error": "Authentication required. Please log in."}, 401)
-            return None
-        token = auth_header[7:]  # strip "Bearer "
-        payload = decode_jwt(token)
-        if payload is None:
-            self._json_response({"error": "Session expired or invalid token. Please log in again."}, 401)
-            return None
-        if require_role and payload.get("role") != require_role:
-            self._json_response({"error": f"Access denied. Requires {require_role} role."}, 403)
-            return None
-        return payload
+        """Bypass authentication and return a public Admin user."""
+        return {"user_id": 1, "username": "public", "role": "Admin"}
 
     def do_GET(self):
         parsed = urlparse(self.path)

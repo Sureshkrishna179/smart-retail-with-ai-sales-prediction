@@ -1,6 +1,6 @@
 // ─── SmartRetail AI — Frontend Logic ───────────────────────────
 const API = '';
-let products = [], cart = [], csvData = null, charts = {}, currentUser = null, allProducts = [];
+let products = [], cart = [], csvData = null, charts = {}, currentUser = { username: 'public', role: 'Admin' }, allProducts = [];
 
 // ─── Role Permissions ──────────────────────────────────────────
 const ROLES = {
@@ -513,3 +513,9 @@ async function checkDB() {
   if (res.status === 'connected') { el.className='db-badge live'; el.textContent='● MySQL Live'; }
   else { el.className='db-badge off'; el.textContent='● Disconnected'; }
 }
+
+// ─── Auto Initialization ──────────────────────────────────────
+applyRoleUI();
+checkDB();
+loadDashboard();
+
