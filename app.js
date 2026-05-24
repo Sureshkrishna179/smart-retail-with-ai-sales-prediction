@@ -62,9 +62,12 @@ function applyRoleUI() {
   if (addBtn) addBtn.style.display = canManage ? 'inline-flex' : 'none';
   // User info
   const roleColors = { Admin:'#ef4444', Manager:'#f59e0b', Staff:'#10b981' };
-  document.getElementById('userInfo').innerHTML =
-    `<strong style="color:#fff">${currentUser.username}</strong><br>
-     <span style="color:${roleColors[currentUser.role]}">${currentUser.role}</span>`;
+  const userInfoEl = document.getElementById('userInfo');
+  if (userInfoEl) {
+    userInfoEl.innerHTML =
+      `<strong style="color:#fff">${currentUser.username}</strong><br>
+       <span style="color:${roleColors[currentUser.role]}">${currentUser.role}</span>`;
+  }
 }
 
 function canAccess(page) {
@@ -144,8 +147,11 @@ function fmt(n) { return Number(n||0).toLocaleString('en-IN', { maximumFractionD
 
 // ─── Dashboard ────────────────────────────────────────────────
 async function loadDashboard() {
-  document.getElementById('dateDisplay').textContent =
-    new Date().toLocaleDateString('en-IN', { weekday:'long', year:'numeric', month:'long', day:'numeric' });
+  const dateEl = document.getElementById('topbarDateTime') || document.getElementById('dateDisplay');
+  if (dateEl) {
+    dateEl.textContent =
+      new Date().toLocaleDateString('en-IN', { weekday:'long', year:'numeric', month:'long', day:'numeric' });
+  }
   const rep = await api('/api/reports');
   if (rep.error) return;
   const low = rep.stock_summary?.low || 0;
@@ -179,8 +185,10 @@ function renderSalesChart(data) {
 }
 
 function renderStockChart(data) {
+  const chartEl = document.getElementById('stockChart');
+  if (!chartEl) return;
   if (charts.stock) charts.stock.destroy();
-  charts.stock = new Chart(document.getElementById('stockChart'), { type:'bar', data:{
+  charts.stock = new Chart(chartEl, { type:'bar', data:{
     labels: data.slice(0,8).map(d=>d.name),
     datasets:[{ label:'Revenue (₹)', data:data.slice(0,8).map(d=>d.total_revenue),
       backgroundColor:['#8b5cf6','#ec4899','#06b6d4','#10b981','#f59e0b','#ef4444','#a78bfa','#f97316'] }]
@@ -226,7 +234,8 @@ function addToCart() {
 function removeFromCart(i) { cart.splice(i,1); renderCart(); }
 
 function renderCart() {
-  document.getElementById('cartCount').textContent = cart.length;
+  const countEl = document.getElementById('cartCount');
+  if (countEl) countEl.textContent = cart.length;
   document.getElementById('cartItems').innerHTML = cart.length
     ? cart.map((c,i) => `<div class="cart-item"><span>${c.name} × ${c.quantity} ${c.unit}</span><span>₹${(c.price*c.quantity).toFixed(2)} <span class="remove" onclick="removeFromCart(${i})">✕</span></span></div>`).join('')
     : '<p style="color:var(--text-dim);text-align:center">Cart empty</p>';
@@ -263,16 +272,19 @@ async function loadInventory() {
 function renderLowStockBanner(prods) {
   const low = prods.filter(p => p.current_stock < p.min_stock_level);
   const banner = document.getElementById('lowStockBanner');
-  if (low.length) {
-    banner.style.display = 'block';
-    document.getElementById('lowStockList').innerHTML = low.map(p =>
-      `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid rgba(239,68,68,0.15)">
-        <span><strong>${p.name}</strong> <span class="tag tag-red">Only ${p.current_stock} left</span></span>
-        <button class="btn btn-danger btn-sm" onclick="restock(${p.id})">Restock +50</button>
-      </div>`
-    ).join('');
-  } else {
-    banner.style.display = 'none';
+  const list = document.getElementById('lowStockList');
+  if (banner && list) {
+    if (low.length) {
+      banner.style.display = 'block';
+      list.innerHTML = low.map(p =>
+        `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid rgba(239,68,68,0.15)">
+          <span><strong>${p.name}</strong> <span class="tag tag-red">Only ${p.current_stock} left</span></span>
+          <button class="btn btn-danger btn-sm" onclick="restock(${p.id})">Restock +50</button>
+        </div>`
+      ).join('');
+    } else {
+      banner.style.display = 'none';
+    }
   }
 }
 
