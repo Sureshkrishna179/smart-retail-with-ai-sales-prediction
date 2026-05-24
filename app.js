@@ -1,4 +1,13 @@
-// ─── SmartRetail AI — Frontend Logic ───────────────────────────
+// Global Error Visualizer for Debugging
+window.onerror = function(message, source, lineno, colno, error) {
+  const msg = `JS Error: ${message} at line ${lineno}, col ${colno} (${source})`;
+  const errDiv = document.createElement('div');
+  errDiv.style.cssText = 'position:fixed;top:0;left:0;width:100%;background:#ef4444;color:#fff;padding:12px;z-index:999999;font-family:monospace;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,0.3);text-align:center';
+  errDiv.innerHTML = `<strong>⚠️ Browser Console Error Detected:</strong> ${msg} <span style="cursor:pointer;margin-left:15px;text-decoration:underline" onclick="this.parentElement.remove()">[Dismiss]</span>`;
+  document.body.appendChild(errDiv);
+  return false;
+};
+
 const API = '';
 let products = [], cart = [], csvData = null, charts = {}, currentUser = { username: 'public', role: 'Admin' }, allProducts = [];
 
@@ -176,8 +185,10 @@ async function loadDashboard() {
 }
 
 function renderSalesChart(data) {
+  const chartEl = document.getElementById('salesChart');
+  if (!chartEl) return;
   if (charts.sales) charts.sales.destroy();
-  charts.sales = new Chart(document.getElementById('salesChart'), { type:'line', data:{
+  charts.sales = new Chart(chartEl, { type:'line', data:{
     labels: data.map(d=>d.month).reverse(),
     datasets:[{ label:'Revenue (₹)', data:data.map(d=>d.revenue).reverse(),
       borderColor:'#8b5cf6', backgroundColor:'rgba(139,92,246,0.1)', fill:true, tension:0.4, pointRadius:4 }]
