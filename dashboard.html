@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>SmartRetail AI — Intelligence System</title>
+<meta name="description" content="SmartRetail AI: ML-powered sales prediction, POS billing, inventory management with festival intelligence.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════════════════════
+     LOGIN SCREEN
+══════════════════════════════════════════════════════════ -->
+<div id="loginScreen" class="login-overlay">
+  <div class="login-card">
+    <div class="login-brand">
+      <div class="brand-icon">🛒</div>
+      <h1>SmartRetail AI</h1>
+      <p>Intelligence System — Sign in to continue</p>
+    </div>
+    <div class="form-group">
+      <label>Username</label>
+      <input type="text" id="loginUser" placeholder="Enter your username" autocomplete="username">
+    </div>
+    <div class="form-group">
+      <label>Password</label>
+      <input type="password" id="loginPass" placeholder="Enter your password" onkeydown="if(event.key==='Enter')doLogin()">
+    </div>
+    <button class="btn btn-primary login-btn" id="loginBtn" onclick="doLogin()">🔐 Sign In to Dashboard</button>
+    <div id="loginError" class="login-error"></div>
+    <div class="login-roles">
+      <p style="font-size:12px;color:var(--text-dim);text-align:center">Contact your system administrator for login credentials.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
+     APP SHELL
+══════════════════════════════════════════════════════════ -->
+<div id="appShell" class="app-shell">
+
+  <!-- ── Sidebar ───────────────────────────────────────────── -->
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <div class="brand-logo">
+        <span>SR</span>
+      </div>
+      <div>
+        <div class="brand-name">SmartRetail AI</div>
+        <div class="brand-sub">Intelligence System</div>
+      </div>
+      <button class="sidebar-toggle" onclick="toggleSidebar()">☰</button>
+    </div>
+
+    <nav class="sidebar-nav">
+      <div class="nav-section-label">MAIN MENU</div>
+      <div class="nav-item active" id="nav-dashboard" onclick="nav('dashboard')">
+        <span class="nav-icon">🏠</span><span class="nav-label">Dashboard</span>
+      </div>
+      <div class="nav-item" id="nav-billing" onclick="nav('billing')">
+        <span class="nav-icon">🧾</span><span class="nav-label">POS Billing</span>
+      </div>
+      <div class="nav-item" id="nav-inventory" onclick="nav('inventory')">
+        <span class="nav-icon">📦</span><span class="nav-label">Inventory</span>
+        <span class="nav-badge" id="lowBadge">0</span>
+      </div>
+
+      <div class="nav-section-label">INTELLIGENCE</div>
+      <div class="nav-item" id="nav-predictions" onclick="nav('predictions')">
+        <span class="nav-icon">🤖</span><span class="nav-label">AI Predictions</span>
+      </div>
+      <div class="nav-item" id="nav-reports" onclick="nav('reports')">
+        <span class="nav-icon">📊</span><span class="nav-label">Reports</span>
+      </div>
+      <div class="nav-item" id="nav-festivals" onclick="nav('festivals')">
+        <span class="nav-icon">🎊</span><span class="nav-label">Festival Calendar</span>
+      </div>
+
+      <div class="nav-section-label">SETTINGS</div>
+      <div class="nav-item" id="nav-admin" onclick="nav('admin')">
+        <span class="nav-icon">⚙️</span><span class="nav-label">Admin Panel</span>
+      </div>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div id="dbStatus" class="db-status">
+        <span class="db-dot"></span><span id="dbStatusText">Connecting...</span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Sidebar Overlay Backdrop for Mobile -->
+  <div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar(false)"></div>
+
+  <!-- ── Main wrapper ──────────────────────────────────────── -->
+  <div class="main-wrapper">
+
+    <!-- Top Bar -->
+    <header class="topbar">
+      <button class="mobile-menu-toggle" id="mobileMenuToggle" onclick="toggleSidebar(true)">☰</button>
+      <div class="topbar-left">
+        <div class="breadcrumb">
+          <span>Home</span>
+          <span class="sep">›</span>
+          <span id="breadcrumbPage" class="current">Sales Dashboard</span>
+        </div>
+      </div>
+      <div class="topbar-center">
+        <div class="search-box">
+          <span>🔍</span>
+          <input type="text" placeholder="Search products, orders, alerts...">
+        </div>
+      </div>
+      <div class="topbar-right">
+        <div class="topbar-datetime" id="topbarDateTime"></div>
+        <div class="mysql-live-pill"><span class="live-dot"></span>MySQL Live</div>
+        <div class="topbar-user" id="topbarUser">
+          <div class="user-avatar" id="userAvatar">?</div>
+        </div>
+        <button class="logout-pill" onclick="doLogout()">🚪</button>
+      </div>
+    </header>
+
+    <!-- Toast -->
+    <div class="toast" id="toast"></div>
+
+    <!-- Main Content -->
+    <main class="main-content">
+
+      <!-- ════ DASHBOARD ══════════════════════════════════ -->
+      <div class="section active" id="sec-dashboard">
+        <div class="page-title">
+          <h1>Sales &amp; Prediction Dashboard</h1>
+          <p>AI-powered insights · Festival-aware forecasting · Live MySQL data</p>
+          <button class="btn btn-sm btn-outline" onclick="loadDashboard()" style="margin-top:10px">🔄 Refresh Data</button>
+        </div>
+
+        <div class="stat-grid" id="kpiCards"></div>
+
+        <div class="content-row">
+          <div class="card flex-2">
+            <div class="card-header">
+              <span>📈 7-Day AI Sales Forecast</span>
+              <div style="display:flex;gap:8px">
+                <button class="pill-btn active" onclick="setForecastDays(7,this)">7 Days</button>
+                <button class="pill-btn" onclick="setForecastDays(30,this)">30 Days</button>
+              </div>
+            </div>
+            <div class="chart-legend"><span class="legend-dot" style="background:#8b5cf6"></span>AI Predicted Sales <span class="legend-dot" style="background:#10b981;margin-left:12px"></span>Actual Sales <span class="legend-dot" style="background:#f59e0b;margin-left:12px"></span>Festival Day</div>
+            <div class="chart-container"><canvas id="salesChart"></canvas></div>
+          </div>
+          <div class="card flex-1">
+            <div class="card-header"><span>🚨 Intelligent Stock Alerts</span><span class="badge-red" id="alertCount">0</span></div>
+            <div id="alertsContainer"><p class="empty-msg">Checking inventory...</p></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ════ POS BILLING ════════════════════════════════ -->
+      <div class="section" id="sec-billing">
+        <div class="page-title">
+          <h1>🧾 POS Billing</h1>
+          <p>Smart billing with cart · auto stock deduction · receipt generation</p>
+        </div>
+        <div class="stat-grid" id="billingStats">
+          <div class="stat-card green"><div class="stat-icon">₹</div><div class="stat-val" id="billingTotal">₹0</div><div class="stat-lbl">TODAY'S BILLING TOTAL</div></div>
+          <div class="stat-card blue"><div class="stat-icon">🛒</div><div class="stat-val" id="ordersToday">0</div><div class="stat-lbl">ORDERS TODAY</div></div>
+          <div class="stat-card orange"><div class="stat-icon">📈</div><div class="stat-val" id="avgOrder">₹0</div><div class="stat-lbl">AVG. ORDER VALUE</div></div>
+        </div>
+        <div class="content-row">
+          <div class="card flex-1">
+            <div class="card-header"><span>🧾 New Bill</span><span style="font-size:12px;color:var(--text-dim)">Select products, set quantity, and generate bill</span></div>
+            <div class="form-row">
+              <div class="form-group flex-2"><label>Product</label><select id="billProduct"></select></div>
+              <div class="form-group" style="width:100px"><label>Qty</label><input type="number" id="billQty" min="1" value="1" style="width:100%"></div>
+              <div class="form-group" style="align-self:flex-end"><button class="btn btn-primary" onclick="addToCart()">+ Add</button></div>
+            </div>
+            <p id="stockInfo" style="font-size:12px;color:var(--text-dim);margin-bottom:12px"></p>
+            <div class="table-responsive">
+              <table id="cartTable">
+                <thead><tr><th>PRODUCT</th><th>QTY</th><th>PRICE</th><th>TOTAL</th><th></th></tr></thead>
+                <tbody id="cartItems"></tbody>
+              </table>
+            </div>
+            <div class="grand-total">Grand Total: <span id="cartTotal">₹0</span></div>
+            <button class="btn btn-success bill-btn" onclick="checkout()">🖨️ Generate Bill</button>
+          </div>
+          <div class="card flex-1">
+            <div class="card-header"><span>🧾 Last Receipt</span></div>
+            <div id="receiptArea"><p class="empty-msg" style="text-align:center;padding:40px">No bill generated yet.<br>Add items to cart and click Generate Bill.</p></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ════ INVENTORY ══════════════════════════════════ -->
+      <div class="section" id="sec-inventory">
+        <div class="page-title">
+          <h1>📦 Inventory Manager</h1>
+          <p>Live stock levels · color-coded alerts · quick restock</p>
+        </div>
+        <div class="stat-grid" id="invStats"></div>
+
+        <div class="card" style="margin-bottom:20px">
+          <div class="card-header" style="flex-wrap:wrap;gap:10px">
+            <span>📋 Stock Overview</span>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;margin-left:auto;align-items:center">
+              <input type="text" id="invSearch" placeholder="🔍 Search..." style="width:200px;padding:8px 12px" oninput="filterInv(this.value)">
+              <select id="invCatFilter" style="width:160px" onchange="filterInv(document.getElementById('invSearch').value)">
+                <option value="">All Categories</option>
+              </select>
+              <button id="btnAddProduct" class="btn btn-primary btn-sm" onclick="showAddProduct()" style="display:none">➕ Add Product</button>
+            </div>
+          </div>
+          <div class="table-responsive">
+            <table>
+              <thead><tr><th>PRODUCT</th><th>CATEGORY</th><th>UNIT</th><th>PRICE (₹)</th><th>STOCK</th><th>STATUS</th><th>ACTION</th></tr></thead>
+              <tbody id="invTable"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ════ ADD PRODUCT MODAL ══════════════════════════ -->
+      <div id="addProductModal" class="modal-overlay" style="display:none" onclick="if(event.target===this)this.style.display='none'">
+        <div class="modal-card">
+          <h3 style="margin-bottom:20px">➕ Add New Product</h3>
+          <div class="form-grid-2">
+            <div class="form-group"><label>Product Name</label><input type="text" id="newProdName" placeholder="e.g. Moong Dal 500g"></div>
+            <div class="form-group"><label>Category</label>
+              <select id="newProdCat"><option>Grocery</option><option>Beverages</option><option>Snacks</option><option>Personal Care</option><option>Spices</option><option>Dairy</option><option>Cleaning</option><option>General</option></select>
+            </div>
+            <div class="form-group"><label>Unit</label>
+              <select id="newProdUnit"><option>kg</option><option>litre</option><option>pack</option><option>packet</option><option>bottle</option><option>piece</option></select>
+            </div>
+            <div class="form-group"><label>Price (₹)</label><input type="number" id="newProdPrice" min="1" placeholder="0.00"></div>
+            <div class="form-group"><label>Initial Stock</label><input type="number" id="newProdStock" min="0" value="100"></div>
+            <div class="form-group"><label>Min Stock Level</label><input type="number" id="newProdMin" min="1" value="50"></div>
+          </div>
+          <div style="display:flex;gap:12px;margin-top:16px">
+            <button class="btn btn-primary" onclick="submitAddProduct()">✅ Add Product</button>
+            <button class="btn btn-outline" onclick="document.getElementById('addProductModal').style.display='none'">Cancel</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ════ AI PREDICTIONS ═════════════════════════════ -->
+      <div class="section" id="sec-predictions">
+        <div class="page-title">
+          <h1>🤖 AI Sales Predictions</h1>
+          <p>Upload your sales CSV/Excel · AI analyzes past data · Festival-aware 7-day forecasts</p>
+        </div>
+
+        <div class="stat-grid" id="predStats">
+          <div class="stat-card purple"><div class="stat-icon">%</div><div class="stat-val" id="modelAccuracy">—</div><div class="stat-lbl">MODEL ACCURACY</div></div>
+          <div class="stat-card blue"><div class="stat-icon">🌲</div><div class="stat-val">RF</div><div class="stat-lbl">RANDOMFOREST REGRESSOR</div></div>
+          <div class="stat-card orange"><div class="stat-icon">🎉</div><div class="stat-val" id="festBoost">1.5x</div><div class="stat-lbl">FESTIVAL BOOST</div></div>
+          <div class="stat-card green"><div class="stat-icon">📄</div><div class="stat-val" id="recordsLoaded">—</div><div class="stat-lbl">RECORDS LOADED</div></div>
+        </div>
+
+        <div class="content-row">
+          <div class="card flex-1">
+            <div class="card-header"><span>📂 Upload Sales Data (CSV / Excel)</span></div>
+            <p style="font-size:12px;color:var(--text-dim);margin-bottom:16px">Upload your historical sales CSV with columns: Date, Product, Sales_Qty (and optionally Stock_Qty)</p>
+            <div class="drop-zone" id="dropZone" onclick="document.getElementById('csvFile').click()">
+              <div class="dz-icon">☁️</div>
+              <div class="dz-text">Click to upload or drag &amp; drop</div>
+              <div class="dz-sub">Supports .csv, .xlsx, .xls files</div>
+            </div>
+            <input type="file" id="csvFile" accept=".csv,.xlsx,.xls" style="display:none" onchange="handleCSV(this)">
+            <div id="csvStatus" style="margin-top:12px"></div>
+
+            <div id="dataAnalysis" style="display:none;margin-top:16px">
+              <div class="card-header"><span>📊 Data Analysis Summary</span></div>
+              <div class="analysis-grid" id="analysisStats"></div>
+            </div>
+
+            <hr class="divider">
+            <div class="card-header"><span>🔮 Predict Sales from Uploaded Data</span></div>
+            <div class="pill-tabs" id="predModeTabs">
+              <button class="pill-tab active" onclick="setPredMode('single',this)">📅 Single Date</button>
+              <button class="pill-tab" onclick="setPredMode('range',this)">📆 Date Range</button>
+            </div>
+            <div class="form-group"><label>Product</label>
+              <select id="predProduct"><option value="">-- Select product --</option></select>
+            </div>
+            <div id="singleDateInputs">
+              <div class="form-group"><label>Forecast Date</label><input type="date" id="predSingleDate"></div>
+            </div>
+            <div id="rangeDateInputs" style="display:none">
+              <div class="form-row">
+                <div class="form-group flex-1"><label>Start Date</label><input type="date" id="predStart"></div>
+                <div class="form-group flex-1"><label>End Date</label><input type="date" id="predEnd"></div>
+              </div>
+            </div>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:4px">
+              <button class="btn btn-primary" onclick="runPrediction(false)">🔮 Predict</button>
+              <button class="btn btn-outline" onclick="runPrediction(true)">🗄️ Use DB Data</button>
+            </div>
+            <p id="trainSource" style="font-size:12px;color:var(--text-dim);margin-top:10px"></p>
+            <a href="/api/csv-template" class="dl-link">📥 Download CSV Template</a>
+          </div>
+          <div class="card flex-1">
+            <div id="predResultsSection">
+              <div class="big-prediction" id="bigPrediction" style="display:none">
+                <div class="pred-units" id="predUnits">— units</div>
+                <div class="pred-sub" id="predSub"></div>
+                <div class="pred-hist" id="predHist"></div>
+              </div>
+              <div id="predResults"><p class="empty-msg" style="padding:40px;text-align:center">Enter a product name and click Predict</p></div>
+              <div class="chart-container" id="forecastChartWrapper" style="display:none"><canvas id="forecastChart"></canvas></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ════ REPORTS ════════════════════════════════════ -->
+      <div class="section" id="sec-reports">
+        <div class="page-title"><h1>📊 Reports &amp; Analytics</h1><p>Business intelligence and performance metrics</p></div>
+        <div class="content-row">
+          <div class="card flex-1"><div class="card-header"><span>💰 Monthly Revenue</span></div><div class="chart-container"><canvas id="revenueChart"></canvas></div></div>
+          <div class="card flex-1"><div class="card-header"><span>🏆 Top Selling Products</span></div><div id="topProducts"></div></div>
+        </div>
+      </div>
+
+      <!-- ════ FESTIVALS ══════════════════════════════════ -->
+      <div class="section" id="sec-festivals">
+        <div class="page-title"><h1>🎊 Festival Calendar</h1><p>35+ Indian festivals tracked by the AI prediction engine</p></div>
+        <div class="content-row">
+          <div class="card flex-1"><div class="card-header"><span>🛕 Tamil Nadu Festivals</span></div><div id="tnFestivals"></div></div>
+          <div class="card flex-1"><div class="card-header"><span>🇮🇳 National &amp; Shopping</span></div><div id="natFestivals"></div></div>
+        </div>
+      </div>
+
+      <!-- ════ ADMIN ════════════════════════════════════ -->
+      <div class="section" id="sec-admin">
+        <div class="page-title"><h1>⚙️ Admin Panel</h1><p>User management, role control, and system audit log</p></div>
+        <div class="content-row">
+          <div class="card flex-1">
+            <div class="card-header"><span>👤 User Management</span></div>
+            <div id="usersPanel"><p class="empty-msg">Loading...</p></div>
+            <hr class="divider">
+            <div class="card-header"><span>➕ Create New User</span></div>
+            <div class="form-group"><label>Username</label><input type="text" id="newUsername" placeholder="username"></div>
+            <div class="form-group"><label>Password</label><input type="password" id="newPassword" placeholder="password"></div>
+            <div class="form-group"><label>Role</label>
+              <select id="newRole">
+                <option value="Staff">Staff — Billing &amp; Dashboard only</option>
+                <option value="Manager">Manager — All except Admin Panel</option>
+                <option value="Admin">Admin — Full Access</option>
+              </select>
+            </div>
+            <button class="btn btn-primary" onclick="createUser()">✅ Create User</button>
+          </div>
+          <div class="card flex-1"><div class="card-header"><span>📋 System Audit Log</span></div><div id="auditPanel"></div></div>
+        </div>
+      </div>
+
+    </main><!-- /main-content -->
+  </div><!-- /main-wrapper -->
+</div><!-- /appShell -->
+
+<script src="app.js"></script>
+</body>
+</html>
