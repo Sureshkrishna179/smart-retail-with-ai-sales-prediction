@@ -134,8 +134,17 @@ def seed_products(cursor):
     cursor.execute("SELECT COUNT(*) as count FROM products")
     result = cursor.fetchone()
     if result[0] > 0:
-        print("Products already seeded, skipping...")
-        return
+        # If database has the old catalog length (37), clear and reseed everything
+        if result[0] == 37:
+            print("Product catalog expanded (37 -> 45). Resetting tables for a clean seed...")
+            cursor.execute("SET FOREIGN_KEY_CHECKS = 0")
+            cursor.execute("TRUNCATE TABLE sales")
+            cursor.execute("TRUNCATE TABLE inventory_log")
+            cursor.execute("TRUNCATE TABLE products")
+            cursor.execute("SET FOREIGN_KEY_CHECKS = 1")
+        else:
+            print("Products already seeded, skipping...")
+            return
 
     products = [
         # Rice variants
