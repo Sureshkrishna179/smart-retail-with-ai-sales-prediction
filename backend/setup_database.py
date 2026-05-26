@@ -31,16 +31,39 @@ DB_NAME = os.getenv("DB_NAME", "retail_sales_db")
 
 
 def create_database():
-    """Create the database if it doesn't exist."""
+    """Create the database if it doesn't exist or connect directly to the existing cloud database."""
+    host = DB_CONFIG.get("host", "localhost")
+    is_local = host in ("localhost", "127.0.0.1", "::1")
+    
+    if is_local:
+        # Local connection: try creating database first
+        try:
+            conn = mysql.connector.connect(
+                host=DB_CONFIG["host"],
+                user=DB_CONFIG["user"],
+                password=DB_CONFIG["password"]
+            )
+            cursor = conn.cursor()
+            cursor.execute(f"CREATE DATABASE IF NOT EXISTS `{DB_NAME}`")
+            cursor.execute(f"USE `{DB_NAME}`")
+            print(f"Database '{DB_NAME}' ready.")
+            return conn, cursor
+        except Error as e:
+            print(f"⚠️ Local database creation failed, trying direct connection: {e}")
+            
+    # Connect directly to the specified database (essential for cloud hosting like Clever Cloud/Render)
     try:
-        conn = mysql.connector.connect(**DB_CONFIG)
+        conn = mysql.connector.connect(
+            host=DB_CONFIG["host"],
+            user=DB_CONFIG["user"],
+            password=DB_CONFIG["password"],
+            database=DB_NAME
+        )
         cursor = conn.cursor()
-        cursor.execute(f"CREATE DATABASE IF NOT EXISTS `{DB_NAME}`")
-        cursor.execute(f"USE `{DB_NAME}`")
-        print(f"Database '{DB_NAME}' ready.")
+        print(f"Connected directly to database '{DB_NAME}'.")
         return conn, cursor
     except Error as e:
-        print(f"❌ Error creating database: {e}")
+        print(f"❌ Error connecting to database: {e}")
         return None, None
 
 
@@ -381,8 +404,9 @@ def main():
 
     conn, cursor = create_database()
     if conn is None:
-        print("❌ Failed to connect to MySQL. Check your .env configuration.")
-        return
+        import sys
+        print("❌ Failed to connect to MySQL. Check your database configuration.")
+        sys.exit(1)
 
     try:
         create_tables(cursor)
