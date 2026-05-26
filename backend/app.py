@@ -153,7 +153,7 @@ if not st.session_state.inventory:
         latest_series = df[df["Product"] == p]["Stock_Qty"]
         latest_list = list(latest_series)
         latest = int(latest_list[-1]) if "Stock_Qty" in df.columns and latest_list else 150
-        st.session_state.inventory[p] = int(latest)
+        st.session_state.inventory[p] = latest
 
 # Train models
 if not st.session_state.models:

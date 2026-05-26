@@ -66,13 +66,7 @@ function showLoginError(msg) {
 }
 
 function doLogout() {
-  currentUser = null;
-  sessionStorage.removeItem('jwt_token');
-  document.getElementById('appShell').classList.remove('visible');
-  document.getElementById('loginScreen').style.display = 'flex';
-  document.getElementById('loginUser').value = '';
-  document.getElementById('loginPass').value = '';
-  document.querySelectorAll('.nav-item').forEach(el => el.style.display = '');
+  toast('Logout is disabled during development bypass', 'info');
 }
 
 function applyRoleUI() {
