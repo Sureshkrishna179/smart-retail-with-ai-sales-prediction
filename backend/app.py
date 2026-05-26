@@ -4,13 +4,12 @@ Maintained for backend administrative tasks.
 Primary interface is dashboard.html served by serve_dashboard.py
 """
 
+from datetime import datetime, timedelta
 import streamlit as st
 import pandas as pd
 import numpy as np
 from sklearn.ensemble import RandomForestRegressor
-from datetime import datetime, timedelta
 import plotly.express as px
-import plotly.graph_objects as go
 
 # ─── Page Config ───────────────────────────────────────────────
 st.set_page_config(page_title="SmartRetail AI", page_icon="🛒", layout="wide")
@@ -36,7 +35,9 @@ FESTIVALS = {
     "Independence Day": [(8, 15), (8, 15)], "Dussehra": [(10, 12), (10, 12)],
 }
 
+
 def is_festival_period(date, window=5):
+    """Check if the date is within a festival window."""
     for name, ((sm, sd), (em, ed)) in FESTIVALS.items():
         try:
             start = datetime(date.year, sm, sd) - timedelta(days=window)
@@ -47,8 +48,10 @@ def is_festival_period(date, window=5):
             continue
     return False, None, 1.0
 
+
 # ─── Data Loading ─────────────────────────────────────────────
 def load_demo_data():
+    """Load mock sales data for Streamlit dashboard."""
     dates = pd.date_range("2025-01-01", "2025-12-31", freq="D")
     products = ["Rice", "Wheat", "Sugar", "Tea", "Oil", "Biscuits", "Soap", "Shampoo"]
     records = []
@@ -56,14 +59,18 @@ def load_demo_data():
         for p in products:
             base = {"Rice": 20, "Wheat": 16, "Sugar": 14, "Tea": 11, "Oil": 8, "Biscuits": 30, "Soap": 9, "Shampoo": 6}
             qty = base.get(p, 10) + np.random.randint(-3, 5)
-            if d.weekday() >= 5: qty = int(qty * 1.15)
+            if d.weekday() >= 5:
+                qty = int(qty * 1.15)
             is_fest, _, mult = is_festival_period(d)
-            if is_fest: qty = int(qty * mult)
+            if is_fest:
+                qty = int(qty * mult)
             records.append({"Date": d, "Product": p, "Sales_Qty": max(1, qty), "Stock_Qty": np.random.randint(50, 300)})
     return pd.DataFrame(records)
 
+
 # ─── ML Training ──────────────────────────────────────────────
 def train_ai_model(df):
+    """Train models for all products."""
     models = {}
     for product in df["Product"].unique():
         pdata = df[df["Product"] == product].copy()
@@ -79,7 +86,9 @@ def train_ai_model(df):
             models[product] = model
     return models
 
+
 def predict_sales(models, product, date):
+    """Predict sales for a product on a date."""
     if product not in models:
         return None
     features = np.array([[date.year, date.month, date.day, date.weekday()]])
@@ -91,17 +100,21 @@ def predict_sales(models, product, date):
         prediction *= 1.15
     return round(prediction, 1)
 
+
 def get_stock_alerts(models, inventory, days=7):
+    """Get stock shortage alerts based on predictions."""
     alerts = []
     today = datetime.now()
     for product, stock in inventory.items():
         total_demand = 0
         for i in range(days):
             pred = predict_sales(models, product, today + timedelta(days=i))
-            if pred: total_demand += pred
+            if pred:
+                total_demand += pred
         if stock < total_demand:
             alerts.append({"product": product, "stock": stock, "demand": round(total_demand), "shortage": round(total_demand - stock)})
     return alerts
+
 
 # ─── Session State ────────────────────────────────────────────
 PRICES = {"Rice": 50, "Wheat": 45, "Sugar": 42, "Tea": 200, "Oil": 155, "Biscuits": 30, "Soap": 35, "Shampoo": 120}
@@ -132,11 +145,14 @@ elif st.session_state.df is None:
     st.sidebar.info("📊 Using Demo Dataset")
 
 df = st.session_state.df
+assert df is not None
 
 # Initialize inventory
 if not st.session_state.inventory:
     for p in df["Product"].unique():
-        latest = df[df["Product"] == p]["Stock_Qty"].iloc[-1] if "Stock_Qty" in df.columns else 150
+        latest_series = df[df["Product"] == p]["Stock_Qty"]
+        latest_list = list(latest_series)
+        latest = int(latest_list[-1]) if "Stock_Qty" in df.columns and latest_list else 150
         st.session_state.inventory[p] = int(latest)
 
 # Train models
@@ -148,7 +164,7 @@ if page == "🏠 Dashboard":
     st.markdown("# 🏠 Dashboard")
     alerts = get_stock_alerts(st.session_state.models, st.session_state.inventory)
     c1, c2, c3 = st.columns(3)
-    total_rev = (df["Sales_Qty"] * df["Product"].map(PRICES)).sum()
+    total_rev = (df["Sales_Qty"] * df["Product"].map(lambda x: PRICES.get(str(x), 0))).sum()
     c1.metric("💰 Total Revenue", f"₹{total_rev:,.0f}")
     c2.metric("📦 Products", len(st.session_state.inventory))
     c3.metric("🚨 Low Stock", len(alerts))
@@ -160,7 +176,9 @@ if page == "🏠 Dashboard":
 
     col1, col2 = st.columns(2)
     with col1:
-        daily = df.groupby("Date")["Sales_Qty"].sum().reset_index()
+        daily_series = df.groupby("Date")["Sales_Qty"].sum()
+        assert isinstance(daily_series, pd.Series)
+        daily = daily_series.reset_index()
         fig = px.line(daily, x="Date", y="Sales_Qty", title="Sales Trend")
         fig.update_traces(line_color="#8b5cf6", line_width=3)
         fig.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
@@ -178,18 +196,19 @@ elif page == "🧮 Billing Calculator":
     with col1:
         product = st.selectbox("Select Product", list(st.session_state.inventory.keys()))
         qty = st.number_input("Quantity", min_value=1, value=1)
-        stock = st.session_state.inventory.get(product, 0)
-        st.info(f"Available: {stock} units | Price: ₹{PRICES.get(product, 0)}/unit")
-        if st.button("💰 Generate Bill"):
-            if qty > stock:
-                st.error("❌ Insufficient stock!")
-            else:
-                old = stock
-                st.session_state.inventory[product] -= qty
-                total = qty * PRICES.get(product, 0)
-                st.success(f"✅ Bill: {product} × {qty} = ₹{total:,.0f}")
-                st.info(f"Stock: {old} → {st.session_state.inventory[product]}")
-                st.balloons()
+        if product:
+            stock = st.session_state.inventory.get(product, 0)
+            st.info(f"Available: {stock} units | Price: ₹{PRICES.get(product, 0)}/unit")
+            if st.button("💰 Generate Bill"):
+                if qty > stock:
+                    st.error("❌ Insufficient stock!")
+                else:
+                    old = stock
+                    st.session_state.inventory[product] -= qty
+                    total = qty * PRICES.get(product, 0)
+                    st.success(f"✅ Bill: {product} × {qty} = ₹{total:,.0f}")
+                    st.info(f"Stock: {old} → {st.session_state.inventory[product]}")
+                    st.balloons()
     with col2:
         st.markdown("### 💰 Price List")
         for p, price in PRICES.items():

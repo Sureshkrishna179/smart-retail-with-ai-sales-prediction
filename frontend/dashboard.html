@@ -14,7 +14,7 @@
 
 <!-- ══════════════════════════════════════════════════════════
      LOGIN SCREEN
-══════════════════════════════════════════════════════════ -->
+     ══════════════════════════════════════════════════════════ -->
 <div id="loginScreen" class="login-overlay" style="display:none">
   <div class="login-card">
     <div class="login-brand">
@@ -40,14 +40,14 @@
 
 <!-- ══════════════════════════════════════════════════════════
      APP SHELL
-══════════════════════════════════════════════════════════ -->
+     ══════════════════════════════════════════════════════════ -->
 <div id="appShell" class="app-shell visible">
 
   <!-- ── Sidebar ───────────────────────────────────────────── -->
   <aside class="sidebar">
     <div class="sidebar-brand">
       <div class="brand-logo">
-        <span>SR</span>
+        <span>🛒</span>
       </div>
       <div>
         <div class="brand-name">SmartRetail AI</div>
@@ -59,7 +59,7 @@
     <nav class="sidebar-nav">
       <div class="nav-section-label">MAIN MENU</div>
       <div class="nav-item active" id="nav-dashboard" onclick="nav('dashboard')">
-        <span class="nav-icon">🏠</span><span class="nav-label">Dashboard</span>
+        <span class="nav-icon">📊</span><span class="nav-label">Dashboard</span>
       </div>
       <div class="nav-item" id="nav-billing" onclick="nav('billing')">
         <span class="nav-icon">🧾</span><span class="nav-label">POS Billing</span>
@@ -74,21 +74,32 @@
         <span class="nav-icon">🤖</span><span class="nav-label">AI Predictions</span>
       </div>
       <div class="nav-item" id="nav-reports" onclick="nav('reports')">
-        <span class="nav-icon">📊</span><span class="nav-label">Reports</span>
+        <span class="nav-icon">📈</span><span class="nav-label">Reports</span>
       </div>
       <div class="nav-item" id="nav-festivals" onclick="nav('festivals')">
         <span class="nav-icon">🎊</span><span class="nav-label">Festival Calendar</span>
       </div>
 
       <div class="nav-section-label">SETTINGS</div>
-      <div class="nav-item" id="nav-admin" onclick="nav('admin')">
-        <span class="nav-icon">⚙️</span><span class="nav-label">Admin Panel</span>
+      <div class="nav-item" id="nav-settings" onclick="nav('settings')">
+        <span class="nav-icon">⚙️</span><span class="nav-label">Settings</span>
+      </div>
+      <div class="nav-item nav-item-admin" id="nav-admin" onclick="nav('admin')">
+        <span class="nav-icon">🔧</span><span class="nav-label">Admin Panel</span>
       </div>
     </nav>
 
     <div class="sidebar-footer">
       <div id="dbStatus" class="db-status">
-        <span class="db-dot"></span><span id="dbStatusText">Connecting...</span>
+        <span class="db-dot"></span><span id="dbStatusText">MySQL · retail_sales_db</span>
+      </div>
+      <div class="sidebar-user-section">
+        <div class="sidebar-user-avatar" id="sidebarAvatar">A</div>
+        <div class="sidebar-user-info">
+          <div class="sidebar-user-name" id="sidebarUserName">admin</div>
+          <div class="sidebar-user-role" id="sidebarUserRole">Admin Account</div>
+        </div>
+        <button class="sidebar-logout-btn" onclick="doLogout()" title="Logout">⬡</button>
       </div>
     </div>
   </aside>
@@ -118,10 +129,13 @@
       <div class="topbar-right">
         <div class="topbar-datetime" id="topbarDateTime"></div>
         <div class="mysql-live-pill"><span class="live-dot"></span>MySQL Live</div>
-        <div class="topbar-user" id="topbarUser">
-          <div class="user-avatar" id="userAvatar">?</div>
+        <div class="topbar-notification" id="topbarNotification" onclick="nav('inventory')">
+          🔔
+          <span class="notification-dot" id="notifDot" style="display:none"></span>
         </div>
-        <button class="logout-pill" onclick="doLogout()">🚪</button>
+        <div class="topbar-user" id="topbarUser">
+          <div class="user-avatar" id="userAvatar">A</div>
+        </div>
       </div>
     </header>
 
@@ -134,9 +148,11 @@
       <!-- ════ DASHBOARD ══════════════════════════════════ -->
       <div class="section active" id="sec-dashboard">
         <div class="page-title">
-          <h1>Sales &amp; Prediction Dashboard</h1>
-          <p>AI-powered insights · Festival-aware forecasting · Live MySQL data</p>
-          <button class="btn btn-sm btn-outline" onclick="loadDashboard()" style="margin-top:10px">🔄 Refresh Data</button>
+          <div class="page-title-left">
+            <h1>Sales & Prediction Dashboard</h1>
+            <p>AI-powered insights · Festival-aware forecasting · Live MySQL data</p>
+          </div>
+          <button class="btn btn-outline btn-refresh" onclick="loadDashboard()">🔄 Refresh Data</button>
         </div>
 
         <div class="stat-grid" id="kpiCards"></div>
@@ -144,10 +160,17 @@
         <div class="content-row">
           <div class="card flex-2">
             <div class="card-header">
-              <span>📈 7-Day AI Sales Forecast</span>
-              <div style="display:flex;gap:8px">
-                <button class="pill-btn active" onclick="setForecastDays(7,this)">7 Days</button>
-                <button class="pill-btn" onclick="setForecastDays(30,this)">30 Days</button>
+              <div class="card-header-left">
+                <span class="card-header-icon">📈</span>
+                <span>7-Day AI Sales Forecast</span>
+                <span class="forecast-model-info" id="forecastModelInfo">RandomForest model · 1.5× festival multiplier applied</span>
+              </div>
+              <div class="card-header-actions">
+                <span class="pongal-badge" id="festWindowBadge" style="display:none">🟢 PONGAL WINDOW ACTIVE</span>
+                <div style="display:flex;gap:8px">
+                  <button class="pill-btn active" onclick="setForecastDays(7,this)">7 Days</button>
+                  <button class="pill-btn" onclick="setForecastDays(30,this)">30 Days</button>
+                </div>
               </div>
             </div>
             <div class="chart-legend"><span class="legend-dot" style="background:#8b5cf6"></span>AI Predicted Sales <span class="legend-dot" style="background:#10b981;margin-left:12px"></span>Actual Sales <span class="legend-dot" style="background:#f59e0b;margin-left:12px"></span>Festival Day</div>
@@ -217,7 +240,7 @@
           </div>
           <div class="table-responsive">
             <table>
-              <thead><tr><th>PRODUCT</th><th>CATEGORY</th><th>UNIT</th><th>PRICE (₹)</th><th>STOCK</th><th>STATUS</th><th>ACTION</th></tr></thead>
+              <thead><tr><th>PRODUCT</th><th>CATEGORY</th><th>UNIT</th><th>PRICE (₹)</th><th>STOCK</th><th>MIN STOCK</th><th>STATUS</th><th>ACTION</th></tr></thead>
               <tbody id="invTable"></tbody>
             </table>
           </div>
@@ -267,7 +290,7 @@
             <p style="font-size:12px;color:var(--text-dim);margin-bottom:16px">Upload your historical sales CSV with columns: Date, Product, Sales_Qty (and optionally Stock_Qty)</p>
             <div class="drop-zone" id="dropZone" onclick="document.getElementById('csvFile').click()">
               <div class="dz-icon">☁️</div>
-              <div class="dz-text">Click to upload or drag &amp; drop</div>
+              <div class="dz-text">Click to upload or drag & drop</div>
               <div class="dz-sub">Supports .csv, .xlsx, .xls files</div>
             </div>
             <input type="file" id="csvFile" accept=".csv,.xlsx,.xls" style="display:none" onchange="handleCSV(this)">
@@ -301,7 +324,9 @@
               <button class="btn btn-outline" onclick="runPrediction(true)">🗄️ Use DB Data</button>
             </div>
             <p id="trainSource" style="font-size:12px;color:var(--text-dim);margin-top:10px"></p>
-            <a href="/api/csv-template" class="dl-link">📥 Download CSV Template</a>
+            <a href="/api/csv-template" class="dl-link" style="margin-bottom:16px;display:block;">📥 Download CSV Template</a>
+            <div id="aggregateBreakdownWrapper" style="margin-bottom:16px;"></div>
+            <div class="chart-container" id="forecastChartWrapper" style="display:none"><canvas id="forecastChart"></canvas></div>
           </div>
           <div class="card flex-1">
             <div id="predResultsSection">
@@ -311,7 +336,6 @@
                 <div class="pred-hist" id="predHist"></div>
               </div>
               <div id="predResults"><p class="empty-msg" style="padding:40px;text-align:center">Enter a product name and click Predict</p></div>
-              <div class="chart-container" id="forecastChartWrapper" style="display:none"><canvas id="forecastChart"></canvas></div>
             </div>
           </div>
         </div>
@@ -319,7 +343,7 @@
 
       <!-- ════ REPORTS ════════════════════════════════════ -->
       <div class="section" id="sec-reports">
-        <div class="page-title"><h1>📊 Reports &amp; Analytics</h1><p>Business intelligence and performance metrics</p></div>
+        <div class="page-title"><h1>📊 Reports & Analytics</h1><p>Business intelligence and performance metrics</p></div>
         <div class="content-row">
           <div class="card flex-1"><div class="card-header"><span>💰 Monthly Revenue</span></div><div class="chart-container"><canvas id="revenueChart"></canvas></div></div>
           <div class="card flex-1"><div class="card-header"><span>🏆 Top Selling Products</span></div><div id="topProducts"></div></div>
@@ -331,13 +355,58 @@
         <div class="page-title"><h1>🎊 Festival Calendar</h1><p>35+ Indian festivals tracked by the AI prediction engine</p></div>
         <div class="content-row">
           <div class="card flex-1"><div class="card-header"><span>🛕 Tamil Nadu Festivals</span></div><div id="tnFestivals"></div></div>
-          <div class="card flex-1"><div class="card-header"><span>🇮🇳 National &amp; Shopping</span></div><div id="natFestivals"></div></div>
+          <div class="card flex-1"><div class="card-header"><span>🇮🇳 National & Shopping</span></div><div id="natFestivals"></div></div>
+        </div>
+      </div>
+
+      <!-- ════ SETTINGS ═══════════════════════════════════ -->
+      <div class="section" id="sec-settings">
+        <div class="page-title"><h1>⚙️ Settings</h1><p>System preferences and configuration</p></div>
+        <div class="content-row">
+          <div class="card flex-1">
+            <div class="card-header"><span>🎨 Appearance</span></div>
+            <div class="settings-row">
+              <div class="settings-item">
+                <span class="settings-label">Theme</span>
+                <span class="settings-value">Dark Mode (Default)</span>
+              </div>
+              <div class="settings-item">
+                <span class="settings-label">Language</span>
+                <span class="settings-value">English</span>
+              </div>
+              <div class="settings-item">
+                <span class="settings-label">Currency</span>
+                <span class="settings-value">₹ INR (Indian Rupee)</span>
+              </div>
+              <div class="settings-item">
+                <span class="settings-label">Date Format</span>
+                <span class="settings-value">DD-MM-YYYY</span>
+              </div>
+            </div>
+          </div>
+          <div class="card flex-1">
+            <div class="card-header"><span>🔔 Notifications</span></div>
+            <div class="settings-row">
+              <div class="settings-item">
+                <span class="settings-label">Low Stock Alerts</span>
+                <span class="tag tag-green">Enabled</span>
+              </div>
+              <div class="settings-item">
+                <span class="settings-label">Festival Reminders</span>
+                <span class="tag tag-green">Enabled</span>
+              </div>
+              <div class="settings-item">
+                <span class="settings-label">Daily Sales Summary</span>
+                <span class="tag tag-green">Enabled</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
       <!-- ════ ADMIN ════════════════════════════════════ -->
       <div class="section" id="sec-admin">
-        <div class="page-title"><h1>⚙️ Admin Panel</h1><p>User management, role control, and system audit log</p></div>
+        <div class="page-title"><h1>🔧 Admin Panel</h1><p>User management, role control, and system audit log</p></div>
         <div class="content-row">
           <div class="card flex-1">
             <div class="card-header"><span>👤 User Management</span></div>
@@ -348,7 +417,7 @@
             <div class="form-group"><label>Password</label><input type="password" id="newPassword" placeholder="password"></div>
             <div class="form-group"><label>Role</label>
               <select id="newRole">
-                <option value="Staff">Staff — Billing &amp; Dashboard only</option>
+                <option value="Staff">Staff — Billing & Dashboard only</option>
                 <option value="Manager">Manager — All except Admin Panel</option>
                 <option value="Admin">Admin — Full Access</option>
               </select>
@@ -360,6 +429,25 @@
       </div>
 
     </main><!-- /main-content -->
+    
+    <!-- ════ DAILY ANALYSIS MODAL ════════════════════════ -->
+    <div class="modal-overlay" id="dailyAnalysisModal" style="display:none; z-index:9999;">
+      <div class="modal-card" style="max-width:500px;">
+        <div class="modal-header" style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border); padding-bottom:12px; margin-bottom:12px;">
+          <h3 style="margin:0;">📅 Daily Prediction Breakdown</h3>
+          <button class="close-btn" onclick="closeDailyAnalysis()" style="background:none; border:none; color:var(--text-dim); font-size:24px; cursor:pointer;">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p style="margin-bottom: 16px; color: var(--text-dim);" id="dailyAnalysisDate">Date</p>
+          <div class="table-responsive">
+            <table style="width:100%;">
+              <thead><tr><th>PRODUCT</th><th>UNITS PREDICTED</th></tr></thead>
+              <tbody id="dailyAnalysisTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
   </div><!-- /main-wrapper -->
 </div><!-- /appShell -->
 

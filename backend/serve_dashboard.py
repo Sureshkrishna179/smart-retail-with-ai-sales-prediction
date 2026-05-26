@@ -11,14 +11,13 @@ import http.server
 import json
 import os
 import io
-import csv
 import hashlib
 import secrets
 import re
 import time
-import traceback
-from urllib.parse import urlparse, parse_qs
-from datetime import datetime, timedelta
+from urllib.parse import urlparse
+from datetime import datetime, timedelta, timezone
+from typing import TypedDict, Optional, Any, cast
 from dotenv import load_dotenv
 
 import jwt  # PyJWT
@@ -26,57 +25,24 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestRegressor
 
-import mysql.connector
-from mysql.connector import pooling, Error
+# Import db connection configuration and helpers from db_config
+from db_config import get_connection, execute_query, execute_transaction, DB_CONFIG
 
-load_dotenv()
+# Find the project root directory where the .env file is located
+backend_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(backend_dir)
+env_path = os.path.join(project_root, ".env")
 
-# ─── Database Configuration ───────────────────────────────────────
-DB_CONFIG = {
-    "host": os.getenv("DB_HOST", "localhost"),
-    "user": os.getenv("DB_USER", "root"),
-    "password": os.getenv("DB_PASSWORD", ""),
-    "database": os.getenv("DB_NAME", "retail_sales_db"),
-}
+# Load environment variables from the root folder
+load_dotenv(dotenv_path=env_path)
 
-_pool = None
-
-def get_pool():
-    global _pool
-    if _pool is None:
-        _pool = pooling.MySQLConnectionPool(
-            pool_name="retail_pool", pool_size=5,
-            pool_reset_session=True, **DB_CONFIG
-        )
-    return _pool
-
+# Delegate DB operations to db_config helpers to avoid duplication
 def db_query(query, params=None, fetch=True):
-    conn = get_pool().get_connection()
-    try:
-        cur = conn.cursor(dictionary=True)
-        cur.execute(query, params or ())
-        if fetch:
-            return cur.fetchall()
-        conn.commit()
-        return cur.lastrowid
-    finally:
-        cur.close()
-        conn.close()
+    return execute_query(query, params, fetch=fetch)
+
 
 def db_transaction(queries):
-    conn = get_pool().get_connection()
-    try:
-        cur = conn.cursor()
-        for q, p in queries:
-            cur.execute(q, p or ())
-        conn.commit()
-        return True
-    except Exception:
-        conn.rollback()
-        return False
-    finally:
-        cur.close()
-        conn.close()
+    return execute_transaction(queries)
 
 
 # ─── Security Configuration ───────────────────────────────────────
@@ -141,6 +107,7 @@ _rate_limiter = RateLimiter()
 # ─── PBKDF2 Password Hashing ──────────────────────────────────────
 PBKDF2_ITERATIONS = 100_000
 
+
 def hash_password(password):
     """Hash a password with a random salt using PBKDF2-HMAC-SHA256.
     Returns 'salt_hex:hash_hex' string."""
@@ -172,8 +139,8 @@ def create_jwt(user_id, username, role):
         "user_id": user_id,
         "username": username,
         "role": role,
-        "iat": datetime.utcnow(),
-        "exp": datetime.utcnow() + timedelta(hours=JWT_EXPIRY_HOURS),
+        "iat": datetime.now(timezone.utc),
+        "exp": datetime.now(timezone.utc) + timedelta(hours=JWT_EXPIRY_HOURS),
     }
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
@@ -391,98 +358,240 @@ def get_demand_multiplier(target_date):
     return round(multiplier, 2), boosts
 
 
+class SalesPredictionDetails(TypedDict):
+    base: float
+    multiplier: float
+    boosts: list[str]
+    adjusted: float
+
+
 # ─── ML Prediction Engine ──────────────────────────────────────────
 _models = {}
 
 def train_model_from_csv(csv_text, product_name):
-    """Train a RandomForest model from ANY user CSV.
-    Auto-detects column names — works with any retailer's dataset format.
-    """
-    df = pd.read_csv(io.StringIO(csv_text))
-    # Smart column detection — case-insensitive, works with any naming
-    date_col = next((c for c in df.columns if 'date' in c.lower()), None)
-    prod_col = next((c for c in df.columns if any(k in c.lower() for k in ['product','item','name','goods','sku'])), None)
-    qty_col  = next((c for c in df.columns if any(k in c.lower() for k in ['qty','quantity','sales','sold','units','count'])), None)
-    if not all([date_col, prod_col, qty_col]):
-        return False, f"CSV must have Date, Product, and Quantity columns. Found columns: {list(df.columns)}"
-    df[date_col] = pd.to_datetime(df[date_col], dayfirst=True, errors='coerce')
-    df = df.dropna(subset=[date_col])
-    prod_data = df[df[prod_col].astype(str).str.strip().str.lower() == product_name.strip().lower()].copy()
-    if len(prod_data) < 10:
-        available = df[prod_col].dropna().unique().tolist()[:10]
-        return False, f"Need >=10 records for '{product_name}', found {len(prod_data)}. Products in CSV: {available}"
-    prod_data['Year']      = prod_data[date_col].dt.year
-    prod_data['Month']     = prod_data[date_col].dt.month
-    prod_data['Day']       = prod_data[date_col].dt.day
-    prod_data['DayOfWeek'] = prod_data[date_col].dt.dayofweek
-    X = prod_data[['Year','Month','Day','DayOfWeek']]
-    y = pd.to_numeric(prod_data[qty_col], errors='coerce').fillna(0)
-    model = RandomForestRegressor(n_estimators=100, random_state=42)
-    model.fit(X, y)
-    avg = float(y.mean())
-    _models[product_name] = {"model": model, "avg": avg, "source": "csv"}
-    return True, f"Trained on {len(prod_data)} records from your CSV (avg: {avg:.1f} units/day)"
+    """Train model using uploaded CSV data."""
+    try:
+        df = pd.read_csv(io.StringIO(csv_text))
+        if 'Date' not in df.columns or 'Sales_Qty' not in df.columns or 'Product' not in df.columns:
+            return False, "CSV must contain Date, Product, and Sales_Qty columns."
+            
+        df['Date'] = pd.to_datetime(df['Date'])
+        
+        target_products = [product_name]
+        if product_name == "ALL":
+            target_products = df['Product'].unique().tolist()
+            if not target_products:
+                return False, "No products found in CSV."
+                
+        total_trained = 0
+        trained_names = []
+        for p_name in target_products:
+            prod_data = df[df['Product'] == p_name].copy()
+            if len(prod_data) < 5:
+                if product_name != "ALL":
+                    return False, f"Not enough data for '{p_name}'. Need 5 records."
+                continue
+                
+            assert isinstance(prod_data, pd.DataFrame)
+            prod_data = prod_data.sort_values(by='Date')
+            prod_data['Year']      = prod_data['Date'].dt.year
+            prod_data['Month']     = prod_data['Date'].dt.month
+            prod_data['Day']       = prod_data['Date'].dt.day
+            prod_data['DayOfWeek'] = prod_data['Date'].dt.dayofweek
+
+            X = prod_data[['Year','Month','Day','DayOfWeek']]
+            y = prod_data['Sales_Qty'].astype(float)
+
+            model = RandomForestRegressor(n_estimators=100, random_state=42)
+            model.fit(X, y)
+            
+            r2_score = model.score(X, y)
+            accuracy = max(0.0, min(100.0, round(r2_score * 100, 1)))
+            
+            avg = float(cast(Any, y.mean()))
+            _models[p_name] = {"model": model, "avg": avg, "accuracy": accuracy, "source": "csv"}
+            total_trained += 1
+            trained_names.append(p_name)
+            
+        if total_trained == 0:
+            return False, "Not enough data to train any model."
+            
+        if product_name == "ALL":
+            return True, f"Trained {total_trained} models from CSV: {', '.join(trained_names)}"
+        else:
+            info = _models.get(product_name, {})
+            prod_data = df[df['Product'] == product_name]
+            rec_count = len(prod_data)
+            avg_val = info.get('avg', 0.0)
+            return True, f"Trained on {rec_count} records from your CSV (avg: {avg_val:.1f} units/day)"
+    except Exception as e:
+        return False, str(e)
 
 
 def train_model_from_db(product_name):
     """Train model using database sales records as fallback when no CSV is provided."""
     try:
-        rows = db_query("""
-            SELECT s.sale_date as date, p.name as product, s.quantity
-            FROM sales s JOIN products p ON s.product_id=p.id
-            WHERE p.name LIKE %s ORDER BY s.sale_date
-        """, (f"%{product_name}%",))
-        if len(rows) < 10:
-            # list available products
+        if product_name == "ALL":
             prods = db_query("SELECT DISTINCT name FROM products ORDER BY name")
-            names = [r['name'] for r in prods]
-            return False, f"Not enough data in DB for '{product_name}'. Available: {names}"
-        df = pd.DataFrame(rows)
-        df['date'] = pd.to_datetime(df['date'])
-        df['Year']      = df['date'].dt.year
-        df['Month']     = df['date'].dt.month
-        df['Day']       = df['date'].dt.day
-        df['DayOfWeek'] = df['date'].dt.dayofweek
-        X = df[['Year','Month','Day','DayOfWeek']]
-        y = df['quantity'].astype(float)
-        model = RandomForestRegressor(n_estimators=100, random_state=42)
-        model.fit(X, y)
-        avg = float(y.mean())
-        _models[product_name] = {"model": model, "avg": avg, "source": "database"}
-        return True, f"Trained from database: {len(df)} records (avg: {avg:.1f} units/day)"
+            if not prods:
+                return False, "No products found in database."
+            target_products = [r['name'] for r in prods]
+        else:
+            target_products = [product_name]
+            
+        total_trained = 0
+        trained_names = []
+        
+        for p_name in target_products:
+            rows = db_query("""
+                SELECT s.sale_date as date, p.name as product, s.quantity, p.category
+                FROM sales s JOIN products p ON s.product_id=p.id
+                WHERE p.name LIKE %s ORDER BY s.sale_date
+            """, (f"%{p_name}%",))
+            
+            if rows is None:
+                continue
+                
+            if len(rows) < 10:
+                prod_info = db_query("SELECT category FROM products WHERE name LIKE %s", (f"%{p_name}%",))
+                if prod_info:
+                    cat = prod_info[0]['category']
+                    cat_sales = db_query("""
+                        SELECT AVG(daily_sum) as cat_avg FROM (
+                            SELECT DATE(s.sale_date) as sd, p.id, SUM(s.quantity) as daily_sum
+                            FROM sales s JOIN products p ON s.product_id = p.id
+                            WHERE p.category = %s AND p.name NOT LIKE %s
+                            GROUP BY sd, p.id
+                        ) t
+                    """, (cat, f"%{p_name}%"))
+                    cat_avg = float(cat_sales[0]['cat_avg']) if cat_sales and cat_sales[0]['cat_avg'] else 5.0
+                    _models[p_name] = {"avg": cat_avg, "source": "category_fallback"}
+                    total_trained += 1
+                    trained_names.append(f"{p_name} (Fallback)")
+                else:
+                    if product_name != "ALL":
+                        return False, f"Product '{p_name}' not found."
+                continue
+                
+            df = pd.DataFrame(rows)
+            df['date'] = pd.to_datetime(df['date'])
+            df['Year']      = df['date'].dt.year
+            df['Month']     = df['date'].dt.month
+            df['Day']       = df['date'].dt.day
+            df['DayOfWeek'] = df['date'].dt.dayofweek
+            
+            X = df[['Year','Month','Day','DayOfWeek']]
+            y = df['quantity'].astype(float)
+            model = RandomForestRegressor(n_estimators=100, random_state=42)
+            model.fit(X, y)
+            
+            r2_score = model.score(X, y)
+            accuracy = max(0.0, min(100.0, round(r2_score * 100, 1)))
+            
+            avg = float(cast(Any, y.mean()))
+            _models[p_name] = {"model": model, "avg": avg, "accuracy": accuracy, "source": "database"}
+            total_trained += 1
+            trained_names.append(p_name)
+            
+        if total_trained == 0:
+            return False, "Not enough data to train any model."
+            
+        if product_name == "ALL":
+            return True, f"Trained {total_trained} models from database."
+        else:
+            info = _models.get(product_name, {})
+            if "model" in info:
+                avg_val = info.get('avg', 0.0)
+                return True, f"Trained from database (avg: {avg_val:.1f} units/day)"
+            else:
+                fallback_avg = _models[product_name]['avg']
+                return True, f"Cold Start: Using category average ({fallback_avg:.1f} units/day)"
     except Exception as e:
         return False, str(e)
 
 
-def predict_sales(product_name, target_date):
+def predict_sales(product_name: str, target_date: datetime) -> tuple[Optional[float], Optional[SalesPredictionDetails]]:
     """Predict sales for a product on a given date with festival/weekend adjustments."""
     info = _models.get(product_name)
     if not info:
-        return None, "Model not trained for this product"
-    features = np.array([[target_date.year, target_date.month, target_date.day, target_date.weekday()]])
-    base_pred = max(0, float(info["model"].predict(features)[0]))
+        return None, None
+        
+    if "model" in info:
+        features = np.array([[target_date.year, target_date.month, target_date.day, target_date.weekday()]])
+        base_pred = max(0, float(info["model"].predict(features)[0]))
+    else:
+        base_pred = info["avg"]
+        
     mult, boosts = get_demand_multiplier(target_date)
     adjusted = round(base_pred * mult, 1)
-    return adjusted, {"base": round(base_pred, 1), "multiplier": mult, "boosts": boosts, "adjusted": adjusted}
+    details: SalesPredictionDetails = {
+        "base": round(base_pred, 1),
+        "multiplier": mult,
+        "boosts": boosts,
+        "adjusted": adjusted,
+    }
+    return adjusted, details
 
 
 def predict_range(product_name, start_date, end_date):
     """Predict sales over a date range."""
     results = []
+    breakdown = {}
+    
+    target_products = [product_name]
+    if product_name == "ALL":
+        target_products = list(_models.keys())
+        if not target_products:
+            return [], {}, None
+
     current = start_date
+    overall_accuracy = []
+    
     while current <= end_date:
-        pred, details = predict_sales(product_name, current)
-        if pred is not None:
+        total_adjusted = 0
+        total_base = 0
+        all_boosts = set()
+        avg_mult = 0
+        valid_models = 0
+        daily_breakdown = {}
+        
+        for p_name in target_products:
+            pred, details = predict_sales(p_name, current)
+            if pred is not None and details is not None:
+                total_adjusted += details["adjusted"]
+                total_base += details["base"]
+                all_boosts.update(details["boosts"])
+                avg_mult += details["multiplier"]
+                valid_models += 1
+                
+                model_info = _models.get(p_name, {})
+                if "accuracy" in model_info:
+                    overall_accuracy.append(model_info["accuracy"])
+                
+                daily_breakdown[p_name] = details["adjusted"]
+                
+                if p_name not in breakdown:
+                    breakdown[p_name] = 0
+                breakdown[p_name] += details["adjusted"]
+                
+        if valid_models > 0:
             results.append({
                 "date": current.strftime("%Y-%m-%d"),
                 "day": current.strftime("%A"),
-                "predicted_qty": details["adjusted"],
-                "base_qty": details["base"],
-                "multiplier": details["multiplier"],
-                "boosts": details["boosts"],
+                "predicted_qty": round(total_adjusted, 1),
+                "base_qty": round(total_base, 1),
+                "multiplier": round(avg_mult / valid_models, 2),
+                "boosts": list(all_boosts),
+                "daily_breakdown": daily_breakdown,
             })
         current += timedelta(days=1)
-    return results
+        
+    for k in breakdown:
+        breakdown[k] = round(breakdown[k], 1)
+        
+    avg_accuracy = round(sum(overall_accuracy) / len(overall_accuracy), 1) if overall_accuracy else None
+        
+    return results, breakdown, avg_accuracy
 
 
 # ─── API Request Handler ───────────────────────────────────────────
@@ -494,20 +603,17 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
         origin = self.headers.get("Origin", "")
         if origin in CORS_ORIGINS:
             return origin
-        # Same-origin requests may not have an Origin header
         if not origin:
             return CORS_ORIGINS[0] if CORS_ORIGINS else None
         return None
 
     # ── Security Headers ──
     def end_headers(self):
-        # Prevent browser caching of HTML, CSS, JS so changes show immediately
         if self.path.endswith(('.html', '.css', '.js')) or '?' in self.path:
             self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
             self.send_header('Pragma', 'no-cache')
             self.send_header('Expires', '0')
 
-        # ── OWASP Security Headers ──
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('X-Frame-Options', 'DENY')
         self.send_header('X-XSS-Protection', '1; mode=block')
@@ -515,7 +621,7 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
         self.send_header('Permissions-Policy', 'camera=(), microphone=(), geolocation=()')
         self.send_header('Content-Security-Policy',
             "default-src 'self'; "
-            "script-src 'self' https://cdn.jsdelivr.net; "
+            "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
             "font-src https://fonts.gstatic.com; "
             "img-src 'self' data:; "
@@ -546,14 +652,70 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
 
     # ── JWT Authentication Middleware ──
     def _authenticate(self, require_role=None):
-        """Bypass authentication and return a public Admin user."""
-        return {"user_id": 1, "username": "public", "role": "Admin"}
+        """Authenticate request using Bearer JWT token in Authorization header."""
+        auth_header = self.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            self.send_response(401)
+            self.send_header("Content-Type", "application/json")
+            origin = self._get_allowed_origin()
+            if origin:
+                self.send_header("Access-Control-Allow-Origin", origin)
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": "Unauthorized. Missing token."}).encode())
+            return None
+            
+        token = auth_header.split(" ", 1)[1].strip()
+        payload = decode_jwt(token)
+        if not payload:
+            self.send_response(401)
+            self.send_header("Content-Type", "application/json")
+            origin = self._get_allowed_origin()
+            if origin:
+                self.send_header("Access-Control-Allow-Origin", origin)
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": "Unauthorized. Invalid or expired token."}).encode())
+            return None
+            
+        # Role authorization check
+        user_role = payload.get("role", "Staff")
+        if require_role:
+            role_hierarchy = {"Admin": 3, "Manager": 2, "Staff": 1}
+            if role_hierarchy.get(user_role, 0) < role_hierarchy.get(require_role, 0):
+                self.send_response(403)
+                self.send_header("Content-Type", "application/json")
+                origin = self._get_allowed_origin()
+                if origin:
+                    self.send_header("Access-Control-Allow-Origin", origin)
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": f"Access denied. Requires {require_role} role."}).encode())
+                return None
+                
+        return payload
+
+    def translate_path(self, path):
+        """Map request URL path to frontend/ directory for static files."""
+        parsed_path = urlparse(path).path
+        if parsed_path in ("/", ""):
+            parsed_path = "/dashboard.html"
+            
+        if parsed_path.startswith("/api/"):
+            return super().translate_path(path)
+            
+        # Map static file request to frontend/ folder
+        backend_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.dirname(backend_dir)
+        frontend_dir = os.path.join(project_root, "frontend")
+        
+        result = os.path.join(frontend_dir, parsed_path.lstrip("/"))
+        print(f"DEBUG: translate_path({path}) -> {result} (exists: {os.path.exists(result)})")
+        return result
+
 
     def do_GET(self):
         parsed = urlparse(self.path)
         path = parsed.path
 
-        if path == "/" or path == "":
+        if path in ("/", ""):
             self.path = "/dashboard.html"
             return super().do_GET()
         elif path == "/api/products":
@@ -605,7 +767,6 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
         body = self._read_body()
 
         if path == "/api/login":
-            # Login has stricter rate limit and no auth required
             if not self._check_rate_limit(RATE_LIMIT_LOGIN): return
             self._handle_login(body)
         elif path == "/api/billing":
@@ -683,10 +844,13 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
     # ── DB Status ──
     def _handle_db_status(self):
         try:
-            conn = get_pool().get_connection()
-            info = conn.server_info
-            conn.close()
-            self._json_response({"status": "connected", "version": info, "database": DB_CONFIG["database"]})
+            conn = get_connection()
+            if conn:
+                info = conn.get_server_info()
+                conn.close()
+                self._json_response({"status": "connected", "version": info, "database": DB_CONFIG["database"]})
+            else:
+                self._json_response({"status": "disconnected", "error": "Failed to connect to database"})
         except Exception as e:
             self._json_response({"status": "disconnected", "error": str(e)})
 
@@ -764,7 +928,7 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
     def _handle_get_reports(self):
         try:
             monthly = db_query("""
-                SELECT DATE_FORMAT(sale_date, '%%Y-%%m') as month, SUM(total_amount) as revenue, SUM(quantity) as units
+                SELECT DATE_FORMAT(sale_date, '%Y-%m') as month, SUM(total_amount) as revenue, SUM(quantity) as units
                 FROM sales GROUP BY month ORDER BY month DESC LIMIT 12
             """)
             top_products = db_query("""
@@ -815,17 +979,65 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
             end     = body.get("end_date", start)
             s = datetime.strptime(start, "%Y-%m-%d")
             e = datetime.strptime(end, "%Y-%m-%d")
-            results = predict_range(product, s, e)
+            
+            results, breakdown, accuracy = predict_range(product, s, e)
             if not results:
                 self._json_response({"error": "No predictions. Train the model first."}, 400)
                 return
+                
             total_predicted = sum(r["predicted_qty"] for r in results)
-            source = _models.get(product, {}).get("source", "unknown")
-            self._json_response({"predictions": results, "total_predicted": round(total_predicted, 1), "product": product, "source": source})
+            
+            if product == "ALL":
+                source = "database/csv (multiple)"
+            else:
+                source = _models.get(product, {}).get("source", "unknown")
+                
+            hist_start = (s - timedelta(days=14)).strftime("%Y-%m-%d")
+            hist_end = (s - timedelta(days=1)).strftime("%Y-%m-%d")
+            
+            if product == "ALL":
+                hist_query = """
+                    SELECT DATE_FORMAT(sale_date, '%Y-%m-%d') as date, SUM(quantity) as quantity
+                    FROM sales 
+                    WHERE sale_date >= %s AND sale_date <= %s
+                    GROUP BY DATE_FORMAT(sale_date, '%Y-%m-%d')
+                    ORDER BY date
+                """
+                hist_rows = db_query(hist_query, (hist_start, hist_end))
+            else:
+                hist_query = """
+                    SELECT DATE_FORMAT(s.sale_date, '%Y-%m-%d') as date, SUM(s.quantity) as quantity
+                    FROM sales s JOIN products p ON s.product_id=p.id
+                    WHERE p.name LIKE %s AND s.sale_date >= %s AND s.sale_date <= %s
+                    GROUP BY DATE_FORMAT(s.sale_date, '%Y-%m-%d')
+                    ORDER BY date
+                """
+                hist_rows = db_query(hist_query, (f"%{product}%", hist_start, hist_end))
+                
+            hist_dict = {r['date']: float(r['quantity']) for r in hist_rows} if hist_rows else {}
+            historical_data = []
+            curr_hist = s - timedelta(days=14)
+            while curr_hist < s:
+                d_str = curr_hist.strftime("%Y-%m-%d")
+                historical_data.append({
+                    "date": d_str,
+                    "quantity": hist_dict.get(d_str, 0)
+                })
+                curr_hist += timedelta(days=1)
+                
+            self._json_response({
+                "predictions": results, 
+                "historical": historical_data,
+                "breakdown": breakdown,
+                "accuracy": accuracy,
+                "total_predicted": round(total_predicted, 1), 
+                "product": product, 
+                "source": source
+            })
         except Exception as e:
             self._json_response({"error": str(e)}, 500)
 
-    # ── Login (public — no auth required) ──
+    # ── Login ──
     def _handle_login(self, body):
         try:
             ok, err = validate_login(body)
@@ -835,7 +1047,6 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
             username = body.get("username", "")
             password = body.get("password", "")
 
-            # Fetch user with password hash
             user = db_query("SELECT id, username, role, password_hash FROM users WHERE username=%s AND is_active=1", (username,))
             if not user:
                 self._json_response({"error": "Invalid credentials or account disabled"}, 401)
@@ -846,10 +1057,8 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
                 self._json_response({"error": "Invalid credentials or account disabled"}, 401)
                 return
 
-            # Generate JWT
             token = create_jwt(u["id"], u["username"], u["role"])
 
-            # Update last login + audit
             db_query("UPDATE users SET last_login=NOW() WHERE id=%s", (u["id"],), fetch=False)
             db_query("INSERT INTO audit_log (user_id, action, details) VALUES (%s, 'LOGIN', 'Successful login')", (u["id"],), fetch=False)
 
@@ -900,7 +1109,7 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
         except Exception as e:
             self._json_response({"error": str(e)}, 500)
 
-    # ── Toggle User Active/Disabled ──
+    # ── Toggle User ──
     def _handle_toggle_user(self, body):
         try:
             ok, err = validate_toggle_user(body)
@@ -946,7 +1155,6 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
         self.wfile.write(template.encode())
 
     def do_OPTIONS(self):
-        """Handle CORS preflight requests with strict origin policy."""
         origin = self._get_allowed_origin()
         self.send_response(200)
         if origin:
@@ -958,13 +1166,13 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
 
     def log_message(self, format, *args):
-        if "/api/" in str(args[0]) if args else False:
-            print(f"  API: {args[0]}")
+        print(f"Request: {args[0] if args else ''}")
 
 
 # ─── Main ──────────────────────────────────────────────────────────
 if __name__ == "__main__":
     PORT = int(os.getenv("PORT", 8080))
+    # os.chdir to directory of this script to keep standard behaviors
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
     print(f"\n{'='*50}")
     print(f"  SmartRetail AI -- Secure Server")
@@ -974,9 +1182,12 @@ if __name__ == "__main__":
     print(f"  Rate Limit: {RATE_LIMIT_MAX}/min (login: {RATE_LIMIT_LOGIN}/min)")
     print(f"  JWT Expiry: {JWT_EXPIRY_HOURS} hours")
     try:
-        conn = get_pool().get_connection()
-        print(f"  MySQL: [OK] Connected ({DB_CONFIG['database']})")
-        conn.close()
+        conn = get_connection()
+        if conn:
+            print(f"  MySQL: [OK] Connected ({DB_CONFIG['database']})")
+            conn.close()
+        else:
+            print("  MySQL: [WARN] Failed to get connection pool connection")
     except Exception as e:
         print(f"  MySQL: [WARN] {e}")
     print(f"  Dashboard: http://localhost:{PORT}/")

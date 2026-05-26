@@ -4,16 +4,22 @@ Creates tables, seeds products with units/variants, and sets up admin user.
 Supports auto-migration (safe to run multiple times).
 """
 
-import mysql.connector
-from mysql.connector import Error
-from dotenv import load_dotenv
 import os
 import hashlib
 import secrets
-from datetime import datetime, timedelta
 import random
+from datetime import datetime, timedelta
+from dotenv import load_dotenv
+import mysql.connector
+from mysql.connector import Error
 
-load_dotenv()
+# Find the project root directory where the .env file is located
+backend_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(backend_dir)
+env_path = os.path.join(project_root, ".env")
+
+# Load environment variables from root
+load_dotenv(dotenv_path=env_path)
 
 DB_CONFIG = {
     "host": os.getenv("DB_HOST", "localhost"),
@@ -40,7 +46,6 @@ def create_database():
 
 def create_tables(cursor):
     """Create all required tables."""
-
     # Products table with unit column
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS products (
@@ -130,11 +135,10 @@ def create_tables(cursor):
 
 
 def seed_products(cursor):
-    """Seed products with units and variant pricing (36 products, some with low stock)."""
+    """Seed products with units and variant pricing."""
     cursor.execute("SELECT COUNT(*) as count FROM products")
     result = cursor.fetchone()
     if result[0] > 0:
-        # If database has the old catalog length (37), clear and reseed everything
         if result[0] == 37:
             print("Product catalog expanded (37 -> 45). Resetting tables for a clean seed...")
             cursor.execute("SET FOREIGN_KEY_CHECKS = 0")
@@ -176,29 +180,28 @@ def seed_products(cursor):
         ("Shampoo 100ml", "Personal Care", "bottle",  65.00, 150, 40),
         ("Shampoo 200ml", "Personal Care", "bottle", 120.00, 100, 30),
         ("Shampoo 500ml", "Personal Care", "bottle", 250.00,  50, 15),
-        # ── Extra Products added below ──────────────────────────────
         # Pulses
         ("Toor Dal 1kg",  "Grocery", "kg",   95.00, 180, 50),
         ("Moong Dal 1kg", "Grocery", "kg",  105.00, 160, 50),
-        ("Chana Dal 1kg", "Grocery", "kg",   88.00,  20, 50),   # LOW STOCK
+        ("Chana Dal 1kg", "Grocery", "kg",   88.00,  20, 50),
         # Spices
         ("Chilli Powder 100g",  "Spices", "pack",  28.00, 200, 60),
         ("Turmeric 100g",       "Spices", "pack",  22.00, 180, 60),
-        ("Coriander Powder 100g","Spices","pack",  25.00,  15, 60),  # LOW STOCK
+        ("Coriander Powder 100g","Spices","pack",  25.00,  15, 60),
         ("Cumin Seeds 100g",    "Spices", "pack",  35.00, 140, 60),
-        ("Mustard Seeds 100g",  "Spices", "pack",  18.00,   8, 60),  # CRITICALLY LOW
+        ("Mustard Seeds 100g",  "Spices", "pack",  18.00,   8, 60),
         # Dairy
         ("Butter 100g",     "Dairy", "pack",   52.00, 120, 40),
-        ("Paneer 200g",     "Dairy", "pack",   85.00,  12, 40),   # LOW STOCK
+        ("Paneer 200g",     "Dairy", "pack",   85.00,  12, 40),
         ("Ghee 500ml",      "Dairy", "bottle", 350.00,  60, 20),
         # Beverages
         ("Coffee 100g",  "Beverages", "pack",  90.00, 130, 40),
-        ("Horlicks 200g","Beverages", "pack", 135.00,   9, 30),   # LOW STOCK
+        ("Horlicks 200g","Beverages", "pack", 135.00,   9, 30),
         ("Boost 200g",   "Beverages", "pack", 125.00,  70, 30),
         # Cleaning
         ("Washing Powder 1kg", "Cleaning", "pack",  65.00, 110, 40),
-        ("Dish Soap 500ml",    "Cleaning", "bottle", 45.00,  18, 40),  # LOW STOCK
-        # New Products Added
+        ("Dish Soap 500ml",    "Cleaning", "bottle", 45.00,  18, 40),
+        # New Products
         ("Milk 500ml",         "Dairy",    "packet", 30.00, 150, 40),
         ("Curd 500g",          "Dairy",    "cup",    45.00,  80, 20),
         ("Tata Salt 1kg",      "Grocery",  "packet", 28.00, 200, 50),
@@ -218,7 +221,7 @@ def seed_products(cursor):
 
 
 def seed_festivals(cursor):
-    """Seed 35+ Indian and Tamil Nadu festivals."""
+    """Seed Indian and Tamil Nadu festivals."""
     cursor.execute("SELECT COUNT(*) as count FROM festivals")
     result = cursor.fetchone()
     if result[0] > 0:
@@ -292,7 +295,6 @@ def seed_demo_sales(cursor):
 
     while current_date <= end_date:
         for prod_id, name, price in products:
-            # Base sales quantity varies by product
             if "Rice" in name or "Wheat" in name or "Sugar" in name:
                 base_qty = random.randint(5, 25)
             elif "Oil" in name:
@@ -310,7 +312,7 @@ def seed_demo_sales(cursor):
             if current_date.weekday() >= 5:
                 base_qty = int(base_qty * 1.2)
 
-            # Festival boost (simplified check)
+            # Festival boost
             month = current_date.month
             day = current_date.day
             if (month == 1 and 14 <= day <= 17):  # Pongal
@@ -320,7 +322,6 @@ def seed_demo_sales(cursor):
             elif (month == 12 and day >= 25) or (month == 1 and day <= 2):  # New Year
                 base_qty = int(base_qty * 1.4)
 
-            # Add some randomness
             qty = max(1, base_qty + random.randint(-3, 3))
             total = round(float(price) * qty, 2)
 
@@ -345,15 +346,14 @@ def seed_demo_sales(cursor):
 
 
 def hash_password_pbkdf2(password):
-    """Hash password with PBKDF2-HMAC-SHA256 + random salt. Returns 'salt_hex:hash_hex'."""
+    """Hash password with PBKDF2-HMAC-SHA256 + random salt."""
     salt = secrets.token_bytes(16)
     dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 100_000)
     return salt.hex() + ":" + dk.hex()
 
 
 def seed_users(cursor):
-    """Create default users for all 3 roles: Admin, Manager, Staff.
-    Uses PBKDF2-HMAC-SHA256 password hashing (100K iterations)."""
+    """Create default users for all 3 roles: Admin, Manager, Staff."""
     cursor.execute("SELECT COUNT(*) as count FROM users")
     result = cursor.fetchone()
     if result[0] > 0:
@@ -376,7 +376,7 @@ def seed_users(cursor):
 
 
 def main():
-    """Run the full database setup."""
+    """Run the database setup script."""
     print("\nSmartRetail AI -- Database Setup\n" + "=" * 40)
 
     conn, cursor = create_database()
@@ -394,13 +394,14 @@ def main():
         print("\nDatabase setup complete!")
         print(f"   Database: {DB_NAME}")
         print(f"   Host: {DB_CONFIG['host']}")
-        print("   Run: python serve_dashboard.py to start the server.\n")
+        print("   Run: python backend/serve_dashboard.py to start the server.\n")
     except Error as e:
         print(f"❌ Setup error: {e}")
         conn.rollback()
     finally:
-        if conn.is_connected():
-            cursor.close()
+        if conn and conn.is_connected():
+            if cursor:
+                cursor.close()
             conn.close()
 
 

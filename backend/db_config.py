@@ -4,12 +4,17 @@ Reads credentials from .env file and provides connection pooling.
 """
 
 import os
+from dotenv import load_dotenv
 import mysql.connector
 from mysql.connector import pooling, Error
-from dotenv import load_dotenv
 
-# Load environment variables
-load_dotenv()
+# Find the project root directory where the .env file is located
+backend_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(backend_dir)
+env_path = os.path.join(project_root, ".env")
+
+# Load environment variables from the root folder
+load_dotenv(dotenv_path=env_path)
 
 DB_CONFIG = {
     "host": os.getenv("DB_HOST", "localhost"),
@@ -56,6 +61,7 @@ def execute_query(query, params=None, fetch=False, fetchone=False):
     conn = get_connection()
     if conn is None:
         return None
+    cursor = None
     try:
         cursor = conn.cursor(dictionary=True)
         cursor.execute(query, params or ())
@@ -73,8 +79,9 @@ def execute_query(query, params=None, fetch=False, fetchone=False):
         conn.rollback()
         return None
     finally:
-        if conn.is_connected():
+        if cursor:
             cursor.close()
+        if conn and conn.is_connected():
             conn.close()
 
 
@@ -83,6 +90,7 @@ def execute_transaction(queries_params_list):
     conn = get_connection()
     if conn is None:
         return False
+    cursor = None
     try:
         cursor = conn.cursor()
         for query, params in queries_params_list:
@@ -94,8 +102,9 @@ def execute_transaction(queries_params_list):
         conn.rollback()
         return False
     finally:
-        if conn.is_connected():
+        if cursor:
             cursor.close()
+        if conn and conn.is_connected():
             conn.close()
 
 
