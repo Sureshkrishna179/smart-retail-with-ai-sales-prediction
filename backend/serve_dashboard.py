@@ -162,19 +162,6 @@ VALID_CATEGORIES = ("Grocery", "Beverages", "Snacks", "Personal Care", "Spices",
 VALID_UNITS = ("kg", "litre", "pack", "packet", "bottle", "piece")
 
 
-def validate_login(body):
-    """Validate login input. Returns (ok, error_msg)."""
-    username = body.get("username", "")
-    password = body.get("password", "")
-    if not isinstance(username, str) or not isinstance(password, str):
-        return False, "Invalid input types"
-    if len(username) < 1 or len(username) > 50:
-        return False, "Username must be 1-50 characters"
-    if len(password) < 1 or len(password) > 128:
-        return False, "Password must be 1-128 characters"
-    return True, ""
-
-
 def validate_create_user(body):
     """Validate user creation input. Returns (ok, error_msg)."""
     username = body.get("username", "")
@@ -535,6 +522,17 @@ def predict_sales(product_name: str, target_date: datetime) -> tuple[Optional[fl
     return adjusted, details
 
 
+def build_accuracy_by_product(product_names):
+    """Per-product in-sample R² accuracy from trained models (None for fallbacks)."""
+    return {p: _models.get(p, {}).get("accuracy") for p in product_names}
+
+
+def average_accuracy(accuracy_by_product):
+    """Mean accuracy across products that have a trained model score."""
+    values = [v for v in accuracy_by_product.values() if v is not None]
+    return round(sum(values) / len(values), 1) if values else None
+
+
 def predict_range(product_name, start_date, end_date):
     """Predict sales over a date range."""
     results = []
@@ -544,7 +542,7 @@ def predict_range(product_name, start_date, end_date):
     if product_name == "ALL":
         target_products = list(_models.keys())
         if not target_products:
-            return [], {}, None
+            return [], {}, None, {}
 
     current = start_date
     overall_accuracy = []
@@ -590,10 +588,11 @@ def predict_range(product_name, start_date, end_date):
         
     for k in breakdown:
         breakdown[k] = round(breakdown[k], 1)
+
+    accuracy_by_product = build_accuracy_by_product(target_products)
+    avg_accuracy = average_accuracy(accuracy_by_product)
         
-    avg_accuracy = round(sum(overall_accuracy) / len(overall_accuracy), 1) if overall_accuracy else None
-        
-    return results, breakdown, avg_accuracy
+    return results, breakdown, avg_accuracy, accuracy_by_product
 
 
 # ─── API Request Handler ───────────────────────────────────────────
@@ -652,50 +651,10 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
             return False
         return True
 
-    # ── JWT Authentication Middleware ──
+    # ── API access (login removed; open local dashboard) ──
     def _authenticate(self, require_role=None):
-        """Authenticate request using Bearer JWT token in Authorization header."""
-        # Development bypass: Always authenticate as Admin
+        """Return fixed admin context for all API routes."""
         return {"user_id": 1, "username": "admin", "role": "Admin"}
-
-        auth_header = self.headers.get("Authorization", "")
-        if not auth_header.startswith("Bearer "):
-            self.send_response(401)
-            self.send_header("Content-Type", "application/json")
-            origin = self._get_allowed_origin()
-            if origin:
-                self.send_header("Access-Control-Allow-Origin", origin)
-            self.end_headers()
-            self.wfile.write(json.dumps({"error": "Unauthorized. Missing token."}).encode())
-            return None
-            
-        token = auth_header.split(" ", 1)[1].strip()
-        payload = decode_jwt(token)
-        if not payload:
-            self.send_response(401)
-            self.send_header("Content-Type", "application/json")
-            origin = self._get_allowed_origin()
-            if origin:
-                self.send_header("Access-Control-Allow-Origin", origin)
-            self.end_headers()
-            self.wfile.write(json.dumps({"error": "Unauthorized. Invalid or expired token."}).encode())
-            return None
-            
-        # Role authorization check
-        user_role = payload.get("role", "Staff")
-        if require_role:
-            role_hierarchy = {"Admin": 3, "Manager": 2, "Staff": 1}
-            if role_hierarchy.get(user_role, 0) < role_hierarchy.get(require_role, 0):
-                self.send_response(403)
-                self.send_header("Content-Type", "application/json")
-                origin = self._get_allowed_origin()
-                if origin:
-                    self.send_header("Access-Control-Allow-Origin", origin)
-                self.end_headers()
-                self.wfile.write(json.dumps({"error": f"Access denied. Requires {require_role} role."}).encode())
-                return None
-                
-        return payload
 
     def translate_path(self, path):
         """Map request URL path to frontend/ directory for static files."""
@@ -771,10 +730,7 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
         path = parsed.path
         body = self._read_body()
 
-        if path == "/api/login":
-            if not self._check_rate_limit(RATE_LIMIT_LOGIN): return
-            self._handle_login(body)
-        elif path == "/api/billing":
+        if path == "/api/billing":
             if not self._check_rate_limit(): return
             user = self._authenticate()
             if not user: return
@@ -968,7 +924,15 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
             else:
                 ok, msg = train_model_from_db(product)
                 source = "database"
-            self._json_response({"success": ok, "message": msg, "source": source})
+            model_names = list(_models.keys()) if product == "ALL" else [product]
+            accuracy_by_product = build_accuracy_by_product(model_names)
+            self._json_response({
+                "success": ok,
+                "message": msg,
+                "source": source,
+                "accuracy": average_accuracy(accuracy_by_product),
+                "accuracy_by_product": accuracy_by_product,
+            })
         except Exception as e:
             self._json_response({"error": str(e)}, 500)
 
@@ -985,7 +949,7 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
             s = datetime.strptime(start, "%Y-%m-%d")
             e = datetime.strptime(end, "%Y-%m-%d")
             
-            results, breakdown, accuracy = predict_range(product, s, e)
+            results, breakdown, accuracy, accuracy_by_product = predict_range(product, s, e)
             if not results:
                 self._json_response({"error": "No predictions. Train the model first."}, 400)
                 return
@@ -1035,42 +999,10 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
                 "historical": historical_data,
                 "breakdown": breakdown,
                 "accuracy": accuracy,
+                "accuracy_by_product": accuracy_by_product,
                 "total_predicted": round(total_predicted, 1), 
                 "product": product, 
                 "source": source
-            })
-        except Exception as e:
-            self._json_response({"error": str(e)}, 500)
-
-    # ── Login ──
-    def _handle_login(self, body):
-        try:
-            ok, err = validate_login(body)
-            if not ok:
-                self._json_response({"error": err}, 400)
-                return
-            username = body.get("username", "")
-            password = body.get("password", "")
-
-            user = db_query("SELECT id, username, role, password_hash FROM users WHERE username=%s AND is_active=1", (username,))
-            if not user:
-                self._json_response({"error": "Invalid credentials or account disabled"}, 401)
-                return
-
-            u = user[0]
-            if not verify_password(password, u["password_hash"]):
-                self._json_response({"error": "Invalid credentials or account disabled"}, 401)
-                return
-
-            token = create_jwt(u["id"], u["username"], u["role"])
-
-            db_query("UPDATE users SET last_login=NOW() WHERE id=%s", (u["id"],), fetch=False)
-            db_query("INSERT INTO audit_log (user_id, action, details) VALUES (%s, 'LOGIN', 'Successful login')", (u["id"],), fetch=False)
-
-            self._json_response({
-                "success": True,
-                "token": token,
-                "user": {"id": u["id"], "username": u["username"], "role": u["role"]}
             })
         except Exception as e:
             self._json_response({"error": str(e)}, 500)
@@ -1182,7 +1114,7 @@ if __name__ == "__main__":
     print(f"\n{'='*50}")
     print(f"  SmartRetail AI -- Secure Server")
     print(f"{'='*50}")
-    print(f"  Security: JWT Auth | PBKDF2 | Rate Limit | CSP")
+    print(f"  Security: Open API (no login) | Rate Limit | CSP")
     print(f"  CORS Origins: {CORS_ORIGINS}")
     print(f"  Rate Limit: {RATE_LIMIT_MAX}/min (login: {RATE_LIMIT_LOGIN}/min)")
     print(f"  JWT Expiry: {JWT_EXPIRY_HOURS} hours")
@@ -1197,7 +1129,13 @@ if __name__ == "__main__":
         print(f"  MySQL: [WARN] {e}")
     print(f"  Dashboard: http://localhost:{PORT}/")
     print(f"{'='*50}\n")
-    server = http.server.HTTPServer(("", PORT), APIHandler)
+    try:
+        server = http.server.HTTPServer(("", PORT), APIHandler)
+    except OSError as e:
+        if getattr(e, "winerror", None) == 10013 or e.errno in (13, 48, 98, 10048):
+            print(f"  [ERROR] Port {PORT} is in use or blocked.")
+            print(f"          Stop the other app (e.g. Tomcat on 8080) or set PORT=8765 in .env")
+        raise SystemExit(1) from e
     try:
         server.serve_forever()
     except KeyboardInterrupt:

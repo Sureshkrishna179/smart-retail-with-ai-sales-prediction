@@ -13,32 +13,6 @@
 <body>
 
 <!-- ══════════════════════════════════════════════════════════
-     LOGIN SCREEN
-     ══════════════════════════════════════════════════════════ -->
-<div id="loginScreen" class="login-overlay" style="display:none">
-  <div class="login-card">
-    <div class="login-brand">
-      <div class="brand-icon">🛒</div>
-      <h1>SmartRetail AI</h1>
-      <p>Intelligence System — Sign in to continue</p>
-    </div>
-    <div class="form-group">
-      <label>Username</label>
-      <input type="text" id="loginUser" placeholder="Enter your username" autocomplete="username">
-    </div>
-    <div class="form-group">
-      <label>Password</label>
-      <input type="password" id="loginPass" placeholder="Enter your password" onkeydown="if(event.key==='Enter')doLogin()">
-    </div>
-    <button class="btn btn-primary login-btn" id="loginBtn" onclick="doLogin()">🔐 Sign In to Dashboard</button>
-    <div id="loginError" class="login-error"></div>
-    <div class="login-roles">
-      <p style="font-size:12px;color:var(--text-dim);text-align:center">Contact your system administrator for login credentials.</p>
-    </div>
-  </div>
-</div>
-
-<!-- ══════════════════════════════════════════════════════════
      APP SHELL
      ══════════════════════════════════════════════════════════ -->
 <div id="appShell" class="app-shell visible">
@@ -278,7 +252,7 @@
         </div>
 
         <div class="stat-grid" id="predStats">
-          <div class="stat-card purple"><div class="stat-icon">%</div><div class="stat-val" id="modelAccuracy">—</div><div class="stat-lbl">MODEL ACCURACY</div></div>
+          <div class="stat-card purple"><div class="stat-icon">%</div><div class="stat-val" id="modelAccuracy">—</div><div class="stat-lbl">MODEL FIT (R²)</div><div class="stat-sub" id="modelAccuracySub" style="font-size:11px;color:var(--text-dim);margin-top:4px"></div></div>
           <div class="stat-card blue"><div class="stat-icon">🌲</div><div class="stat-val">RF</div><div class="stat-lbl">RANDOMFOREST REGRESSOR</div></div>
           <div class="stat-card orange"><div class="stat-icon">🎉</div><div class="stat-val" id="festBoost">1.5x</div><div class="stat-lbl">FESTIVAL BOOST</div></div>
           <div class="stat-card green"><div class="stat-icon">📄</div><div class="stat-val" id="recordsLoaded">—</div><div class="stat-lbl">RECORDS LOADED</div></div>

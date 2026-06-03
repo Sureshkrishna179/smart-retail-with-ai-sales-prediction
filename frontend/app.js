@@ -17,14 +17,7 @@ window.addEventListener('unhandledrejection', function(event) {
 
 
 const API = '';
-let products = [], cart = [], csvData = null, charts = {}, currentUser = { username: 'admin', role: 'Admin' }, allProducts = [];
-
-// ─── Role Permissions ──────────────────────────────────────────
-const ROLES = {
-  Admin:   ['dashboard','billing','inventory','predictions','reports','festivals','settings','admin'],
-  Manager: ['dashboard','billing','inventory','predictions','reports','festivals','settings'],
-  Staff:   ['dashboard','billing'],
-};
+let products = [], cart = [], csvData = null, charts = {}, currentUser = { username: 'Guest', role: 'Admin' }, allProducts = [];
 
 // ─── Page breadcrumb names ─────────────────────────────────────
 const PAGE_NAMES = {
@@ -38,49 +31,10 @@ const PAGE_NAMES = {
   admin: 'Admin Panel',
 };
 
-// ─── Login ────────────────────────────────────────────────────
-async function doLogin() {
-  const username = document.getElementById('loginUser').value.trim();
-  const password = document.getElementById('loginPass').value;
-  const btn = document.getElementById('loginBtn');
-  const err = document.getElementById('loginError');
-  if (!username || !password) { showLoginError('Enter username and password'); return; }
-  btn.textContent = 'Signing in...'; btn.disabled = true;
-  const res = await api('/api/login', { method:'POST', body:{ username, password } });
-  btn.textContent = '🔐 Sign In'; btn.disabled = false;
-  if (res.error) { showLoginError(res.error); return; }
-  if (res.token) sessionStorage.setItem('jwt_token', res.token);
-  currentUser = res.user;
-  document.getElementById('loginScreen').style.display = 'none';
-  document.getElementById('appShell').classList.add('visible');
-  applyRoleUI();
-  updateUserDisplay();
-  checkDB();
-  loadDashboard();
-}
-
-function showLoginError(msg) {
-  const e = document.getElementById('loginError');
-  e.textContent = msg; e.style.display = 'block';
-  setTimeout(() => e.style.display = 'none', 4000);
-}
-
-function doLogout() {
-  toast('Logout is disabled during development bypass', 'info');
-}
-
 function applyRoleUI() {
-  if (!currentUser) return;
-  const allowed = ROLES[currentUser.role] || [];
-  document.querySelectorAll('.nav-item').forEach(el => {
-    const page = el.id?.replace('nav-','');
-    if (page) {
-      el.style.display = allowed.includes(page) ? 'flex' : 'none';
-    }
-  });
-  const canManage = currentUser.role === 'Admin' || currentUser.role === 'Manager';
+  document.querySelectorAll('.nav-item').forEach(el => { el.style.display = 'flex'; });
   const addBtn = document.getElementById('btnAddProduct');
-  if (addBtn) addBtn.style.display = canManage ? 'inline-flex' : 'none';
+  if (addBtn) addBtn.style.display = 'inline-flex';
 }
 
 function updateUserDisplay() {
@@ -96,9 +50,8 @@ function updateUserDisplay() {
   if (avatar) avatar.textContent = initial;
 }
 
-function canAccess(page) {
-  if (!currentUser) return false;
-  return (ROLES[currentUser.role] || []).includes(page);
+function canAccess() {
+  return true;
 }
 
 // ─── Mobile Sidebar Controls ───────────────────────────────────
@@ -120,8 +73,6 @@ function toggleSidebar(show) {
 
 // ─── Navigation ────────────────────────────────────────────────
 function nav(page) {
-  if (!canAccess(page)) { toast('Access denied for your role', 'error'); return; }
-  
   document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   
@@ -157,17 +108,10 @@ function toast(msg, type = 'success') {
 async function api(path, opts = {}) {
   try {
     const headers = { 'Content-Type': 'application/json' };
-    const token = sessionStorage.getItem('jwt_token');
-    if (token) headers['Authorization'] = 'Bearer ' + token;
     const r = await fetch(API + path, {
       headers, ...opts,
       body: opts.body ? JSON.stringify(opts.body) : undefined
     });
-    if (r.status === 401 && path !== '/api/login') {
-      toast('Session expired. Please log in again.', 'error');
-      doLogout();
-      return { error: 'Session expired' };
-    }
     if (r.status === 429) {
       const data = await r.json().catch(() => ({}));
       toast(data.error || 'Too many requests. Please slow down.', 'warning');
@@ -531,13 +475,45 @@ async function runPrediction(forceDB = false) {
   const src = train.source === 'database' ? '🗄️ Trained from database' : '📄 Trained from your CSV';
   document.getElementById('trainSource').textContent = `${src}: ${train.message}`;
   toast(train.message);
+  updatePredictionAccuracyStats(train, train.message);
   
   const pred = await api('/api/predict', { method:'POST', body:{ product, start_date: start, end_date: end } });
   if (pred.error) return toast(pred.error,'error');
-  renderPredictions(pred);
+  renderPredictions(pred, train.message);
 }
 
-function renderPredictions(data) {
+function formatAccuracyCell(prodName, accuracyByProduct) {
+  const acc = accuracyByProduct?.[prodName];
+  if (acc !== undefined && acc !== null) {
+    const color = acc > 80 ? 'var(--success)' : acc > 50 ? '#f59e0b' : 'var(--red)';
+    return `<span style="font-weight:600;color:${color}">${acc}%</span>`;
+  }
+  return '<span style="color:var(--text-dim)">Fallback</span>';
+}
+
+function updatePredictionAccuracyStats(data, trainMessage) {
+  const accEl = document.getElementById('modelAccuracy');
+  const accSub = document.getElementById('modelAccuracySub');
+  if (!accEl) return;
+  if (data.accuracy !== undefined && data.accuracy !== null) {
+    accEl.textContent = data.accuracy + '%';
+    if (accSub) accSub.textContent = 'In-sample R² on training data';
+  } else {
+    accEl.textContent = 'N/A';
+    if (accSub) accSub.textContent = 'Train with enough sales history (Use DB Data or CSV)';
+  }
+  const recordsEl = document.getElementById('recordsLoaded');
+  if (recordsEl && trainMessage) {
+    const recMatch = trainMessage.match(/(\d+)\s+records?/i);
+    const modelMatch = trainMessage.match(/Trained\s+(\d+)\s+models/i);
+    if (recMatch) recordsEl.textContent = recMatch[1];
+    else if (modelMatch) recordsEl.textContent = modelMatch[1] + ' models';
+  }
+}
+
+function renderPredictions(data, trainMessage) {
+  updatePredictionAccuracyStats(data, trainMessage);
+
   const srcLabel = data.source.includes('multiple') 
     ? '<span class="tag tag-gold">Source: Multiple Models</span>'
     : (data.source === 'database'
@@ -551,6 +527,7 @@ function renderPredictions(data) {
     document.getElementById('predSub').textContent = `${data.product === 'ALL' ? 'All Products' : data.product} — ${data.predictions.length} day forecast`;
   }
   
+  const accuracyByProduct = data.accuracy_by_product || {};
   let breakdownHtml = '';
   if (data.breakdown && Object.keys(data.breakdown).length > 0) {
     const sortedBreakdown = Object.entries(data.breakdown).sort((a,b) => b[1] - a[1]);
@@ -559,10 +536,10 @@ function renderPredictions(data) {
         <h3 style="margin-bottom: 8px;">Prediction Breakdown by Product</h3>
         <div class="table-responsive">
           <table>
-            <thead><tr><th>Product Name</th><th>Total Predicted Units</th></tr></thead>
+            <thead><tr><th>Product Name</th><th>Total Predicted Units</th><th>Model Fit (R²)</th></tr></thead>
             <tbody>
               ${sortedBreakdown.map(([prodName, qty]) => 
-                `<tr><td>${prodName}</td><td style="font-weight:bold;color:var(--accent)">${qty} units</td></tr>`
+                `<tr><td>${prodName}</td><td style="font-weight:bold;color:var(--accent)">${qty} units</td><td>${formatAccuracyCell(prodName, accuracyByProduct)}</td></tr>`
               ).join('')}
             </tbody>
           </table>
@@ -574,7 +551,9 @@ function renderPredictions(data) {
   let accTag = '';
   if (data.accuracy !== undefined && data.accuracy !== null) {
     let accColor = data.accuracy > 80 ? 'tag-green' : data.accuracy > 50 ? 'tag-gold' : 'tag-red';
-    accTag = `<span class="tag ${accColor}">Model Accuracy: ${data.accuracy}%</span>`;
+    accTag = `<span class="tag ${accColor}">Model Fit (R²): ${data.accuracy}%</span>`;
+  } else {
+    accTag = '<span class="tag tag-red">Model Fit: N/A (insufficient history)</span>';
   }
 
   window.currentPredictions = data.predictions;
@@ -832,18 +811,6 @@ function initApp() {
     sidebarOverlay.addEventListener('click', function() { toggleSidebar(false); });
   }
 
-  var loginBtn = document.getElementById('loginBtn');
-  if (loginBtn) {
-    loginBtn.removeAttribute('onclick');
-    loginBtn.addEventListener('click', function() { doLogin(); });
-  }
-
-  var loginPass = document.getElementById('loginPass');
-  if (loginPass) {
-    loginPass.removeAttribute('onkeydown');
-    loginPass.addEventListener('keydown', function(e) { if (e.key === 'Enter') doLogin(); });
-  }
-
   var refreshBtn = document.querySelector('.btn-refresh');
   if (refreshBtn) {
     refreshBtn.removeAttribute('onclick');
@@ -854,12 +821,6 @@ function initApp() {
   if (notifBell) {
     notifBell.removeAttribute('onclick');
     notifBell.addEventListener('click', function() { nav('inventory'); });
-  }
-
-  var logoutBtn = document.querySelector('.sidebar-logout-btn');
-  if (logoutBtn) {
-    logoutBtn.removeAttribute('onclick');
-    logoutBtn.addEventListener('click', function() { doLogout(); });
   }
 
   var addCartBtn = document.querySelector('.btn-primary[onclick="addToCart()"]');
