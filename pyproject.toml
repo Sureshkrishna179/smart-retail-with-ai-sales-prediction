@@ -1,0 +1,26 @@
+[project]
+name = "smartretail-ai"
+version = "1.0.0"
+description = "Grocery retail dashboard with ML forecasting and festival intelligence"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "SmartRetail Team" }]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["backend", "src"]
+markers = [
+    "integration: requires MySQL",
+    "slow: longer-running checks",
+]
+addopts = "-ra --strict-markers -q"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.coverage.run]
+source = ["backend"]
+omit = ["backend/legacy/*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

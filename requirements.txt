@@ -1,8 +1,9 @@
-streamlit
-pandas
-numpy
-scikit-learn
-plotly
-mysql-connector-python
-python-dotenv
-PyJWT
+# Production dependencies — LOW-02: pinned to exact lower bounds
+# To update: run pip-compile requirements.in > requirements.txt --generate-hashes
+pandas>=2.0,<3.0
+numpy>=1.24,<2.0
+scikit-learn>=1.3,<2.0
+mysql-connector-python>=8.0,<9.0
+python-dotenv>=1.0,<2.0
+PyJWT>=2.8,<3.0
+joblib>=1.3,<2.0

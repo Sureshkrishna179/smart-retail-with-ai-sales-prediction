@@ -1,5 +1,15 @@
 # Python
 __pycache__/
+.pytest_cache/
+pytest-cache-files-*/
+.coverage
+coverage.xml
+htmlcov/
+data/ml_models*
+ml_models.*
+*.pkl
+*.sig
+logs/
 *.py[cod]
 *$py.class
 .venv/

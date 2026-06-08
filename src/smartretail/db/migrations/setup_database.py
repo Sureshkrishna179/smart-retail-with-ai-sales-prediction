@@ -5,6 +5,7 @@ Supports auto-migration (safe to run multiple times).
 """
 
 import os
+import csv
 import hashlib
 import secrets
 import random
@@ -13,13 +14,10 @@ from dotenv import load_dotenv
 import mysql.connector
 from mysql.connector import Error
 
-# Find the project root directory where the .env file is located
-backend_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.dirname(backend_dir)
-env_path = os.path.join(project_root, ".env")
+from paths import ENV_FILE, GROCERY_CSV, PROJECT_ROOT
 
-# Load environment variables from root
-load_dotenv(dotenv_path=env_path)
+load_dotenv(dotenv_path=ENV_FILE)
+project_root = PROJECT_ROOT
 
 DB_CONFIG = {
     "host": os.getenv("DB_HOST", "localhost"),
@@ -122,9 +120,20 @@ def create_tables(cursor):
             role ENUM('Admin', 'Manager', 'Staff', 'Viewer') DEFAULT 'Staff',
             is_active BOOLEAN DEFAULT TRUE,
             last_login TIMESTAMP NULL,
+            failed_attempts INT NOT NULL DEFAULT 0,
+            locked_until TIMESTAMP NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    # MED-02: Add lockout columns to existing deployments (idempotent migration)
+    for col_sql in [
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS failed_attempts INT NOT NULL DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS locked_until TIMESTAMP NULL",
+    ]:
+        try:
+            cursor.execute(col_sql)
+        except Exception:
+            pass  # Column already exists on older MySQL that doesn't support IF NOT EXISTS
 
     # Audit log table
     cursor.execute("""
@@ -162,16 +171,8 @@ def seed_products(cursor):
     cursor.execute("SELECT COUNT(*) as count FROM products")
     result = cursor.fetchone()
     if result[0] > 0:
-        if result[0] == 37:
-            print("Product catalog expanded (37 -> 45). Resetting tables for a clean seed...")
-            cursor.execute("SET FOREIGN_KEY_CHECKS = 0")
-            cursor.execute("TRUNCATE TABLE sales")
-            cursor.execute("TRUNCATE TABLE inventory_log")
-            cursor.execute("TRUNCATE TABLE products")
-            cursor.execute("SET FOREIGN_KEY_CHECKS = 1")
-        else:
-            print("Products already seeded, skipping...")
-            return
+        print("Products already seeded, skipping...")
+        return
 
     products = [
         # Rice variants
@@ -226,7 +227,7 @@ def seed_products(cursor):
         ("Dish Soap 500ml",    "Cleaning", "bottle", 45.00,  18, 40),
         # New Products
         ("Milk 500ml",         "Dairy",    "packet", 30.00, 150, 40),
-        ("Curd 500g",          "Dairy",    "cup",    45.00,  80, 20),
+        ("Curd 500g",          "Dairy",    "packet", 45.00,  80, 20),
         ("Tata Salt 1kg",      "Grocery",  "packet", 28.00, 200, 50),
         ("Sona Masuri Rice 5kg","Grocery",  "kg",    320.00,  90, 20),
         ("Urad Dal 1kg",       "Grocery",  "kg",    120.00, 100, 30),
@@ -300,12 +301,57 @@ def seed_festivals(cursor):
     print(f"Seeded {len(festivals)} festivals.")
 
 
+def seed_sales_from_grocery_csv(cursor):
+    """Import sales from data/grocery_sales_realistic.csv when product names match catalog."""
+    csv_path = GROCERY_CSV
+    if not csv_path.is_file():
+        return False
+
+    cursor.execute("SELECT id, name, price FROM products")
+    catalog = {row[1]: (row[0], float(row[2])) for row in cursor.fetchall()}
+    sales_records = []
+
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            pname = row.get("Product", "").strip()
+            if pname not in catalog:
+                continue
+            try:
+                qty = int(float(row.get("Sales_Qty", 0)))
+            except (ValueError, TypeError):
+                continue
+            if qty < 1:
+                continue
+            sale_date = row.get("Date", "").strip()
+            pid, price = catalog[pname]
+            total = round(price * qty, 2)
+            sales_records.append((pid, qty, price, total, sale_date))
+
+    if len(sales_records) < 100:
+        return False
+
+    batch_size = 500
+    for i in range(0, len(sales_records), batch_size):
+        batch = sales_records[i : i + batch_size]
+        cursor.executemany(
+            """INSERT INTO sales (product_id, quantity, unit_price, total_amount, sale_date)
+               VALUES (%s, %s, %s, %s, %s)""",
+            batch,
+        )
+    print(f"Imported {len(sales_records)} sales rows from grocery CSV ({csv_path.name}).")
+    return True
+
+
 def seed_demo_sales(cursor):
     """Generate realistic demo sales data for training the ML model."""
     cursor.execute("SELECT COUNT(*) as count FROM sales")
     result = cursor.fetchone()
     if result[0] > 0:
         print("Sales data already seeded, skipping...")
+        return
+
+    if seed_sales_from_grocery_csv(cursor):
         return
 
     cursor.execute("SELECT id, name, price FROM products")
@@ -368,35 +414,48 @@ def seed_demo_sales(cursor):
     print(f"Seeded {len(sales_records)} sales records (1 year of data).")
 
 
+# CRIT-03: hash_password_pbkdf2 is now imported from auth_service (600K iterations).
+# This function is kept as a thin wrapper for backward compat with any callers in this file.
 def hash_password_pbkdf2(password):
-    """Hash password with PBKDF2-HMAC-SHA256 + random salt."""
-    salt = secrets.token_bytes(16)
-    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 100_000)
-    return salt.hex() + ":" + dk.hex()
+    """Hash password with PBKDF2-HMAC-SHA256 (600K iterations) — delegates to auth_service."""
+    from smartretail.services.auth_service import hash_password_pbkdf2 as _hash
+    return _hash(password)
 
 
-def seed_users(cursor):
-    """Create default users for all 3 roles: Admin, Manager, Staff."""
-    cursor.execute("SELECT COUNT(*) as count FROM users")
-    result = cursor.fetchone()
-    if result[0] > 0:
-        print("Users already seeded, skipping...")
-        return
-
-    users = [
-        ("admin",   hash_password_pbkdf2("admin123"),   "Admin"),
-        ("manager", hash_password_pbkdf2("manager123"), "Manager"),
-        ("staff",   hash_password_pbkdf2("staff123"),   "Staff"),
+def _generate_secure_password(length=20):
+    """Generate a cryptographically random password meeting complexity requirements."""
+    import string
+    alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
+    # Ensure at least one of each required character class
+    password = [
+        secrets.choice(string.ascii_uppercase),
+        secrets.choice(string.ascii_lowercase),
+        secrets.choice(string.digits),
+        secrets.choice("!@#$%^&*"),
     ]
-    cursor.executemany(
-        """INSERT INTO users (username, password_hash, role) VALUES (%s, %s, %s)""",
-        users,
-    )
-    print("Users created (PBKDF2 hashed):")
-    print("  admin   / admin123   (Admin)")
-    print("  manager / manager123 (Manager)")
-    print("  staff   / staff123   (Staff)")
+    password += [secrets.choice(alphabet) for _ in range(length - 4)]
+    # Shuffle to avoid predictable positions
+    random.shuffle(password)
+    return "".join(password)
 
+
+import string
+
+def create_first_admin(conn, cursor):
+    """Create the first admin user with a securely generated random password."""
+    cursor.execute("SELECT COUNT(*) AS c FROM users WHERE role='Admin'")
+    if cursor.fetchone()[0] > 0:
+        return
+        
+    pw = "".join(secrets.choice(string.ascii_letters + string.digits + "!@#$%^") for _ in range(20))
+    # We must import hash_password_pbkdf2 here or define it, since we are moving it.
+    from smartretail.services.auth_service import hash_password_pbkdf2
+    cursor.execute(
+        "INSERT INTO users (username, password_hash, role) VALUES (%s, %s, 'Admin')",
+        ("admin", hash_password_pbkdf2(pw))
+    )
+    conn.commit()
+    print(f"\n{'='*50}\nFirst-run admin password: {pw}\nChange it immediately!\n{'='*50}\n")
 
 def main():
     """Run the database setup script."""
@@ -408,12 +467,29 @@ def main():
         print("❌ Failed to connect to MySQL. Check your database configuration.")
         sys.exit(1)
 
+    grocery_csv = GROCERY_CSV
+    if not grocery_csv.is_file():
+        print("Tip: run 'python scripts/generate_grocery_sales.py' for realistic sales data.")
+
     try:
+        assert cursor is not None
         create_tables(cursor)
         seed_products(cursor)
         seed_festivals(cursor)
         seed_demo_sales(cursor)
-        seed_users(cursor)
+        
+        import sys
+        sys.path.insert(0, str(project_root / "src"))
+        create_first_admin(conn, cursor)
+        
+        # SECURITY-FIX applied: Least privilege database user (Fix 15)
+        cursor.execute("CREATE USER IF NOT EXISTS 'retail_app'@'localhost' IDENTIFIED BY %s", (DB_CONFIG["password"],))
+        cursor.execute("GRANT SELECT, INSERT, UPDATE ON retail_sales_db.products TO 'retail_app'@'localhost'")
+        cursor.execute("GRANT SELECT, INSERT ON retail_sales_db.sales TO 'retail_app'@'localhost'")
+        cursor.execute("GRANT SELECT, INSERT, UPDATE ON retail_sales_db.users TO 'retail_app'@'localhost'")
+        cursor.execute("GRANT SELECT, INSERT ON retail_sales_db.audit_log TO 'retail_app'@'localhost'")
+        cursor.execute("FLUSH PRIVILEGES")
+        
         conn.commit()
         print("\nDatabase setup complete!")
         print(f"   Database: {DB_NAME}")

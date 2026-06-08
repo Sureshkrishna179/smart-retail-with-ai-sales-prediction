@@ -1,0 +1,7 @@
+-r requirements.txt
+pytest>=8.0
+pytest-cov>=4.1
+requests>=2.31
+# LOW-01: Security scanning tools
+bandit>=1.7
+pip-audit>=2.7

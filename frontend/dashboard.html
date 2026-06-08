@@ -7,10 +7,25 @@
 <meta name="description" content="SmartRetail AI: ML-powered sales prediction, POS billing, inventory management with festival intelligence.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<link rel="stylesheet" href="styles.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
+
+<!-- Login overlay (enforced when REQUIRE_AUTH=1 on server + data-require-auth="1") -->
+<div id="loginOverlay" class="login-overlay" data-require-auth="1">
+  <div class="login-card">
+    <div class="login-brand">
+      <h1>🛒 SmartRetail AI</h1>
+      <p>Sign in to your store account</p>
+    </div>
+    <div class="form-group"><label>Username</label><input type="text" id="loginUsername" placeholder="admin" autocomplete="username"></div>
+    <div class="form-group"><label>Password</label><input type="password" id="loginPassword" placeholder="••••••••" autocomplete="current-password"></div>
+    <button type="button" class="btn btn-primary login-btn" id="loginBtn">Sign In</button>
+    <div class="login-error" id="loginError"></div>
+    <!-- CRIT-04: Demo credentials removed — never expose passwords in HTML source -->
+  </div>
+</div>
 
 <!-- ══════════════════════════════════════════════════════════
      APP SHELL
@@ -27,38 +42,38 @@
         <div class="brand-name">SmartRetail AI</div>
         <div class="brand-sub">Intelligence System</div>
       </div>
-      <button class="sidebar-toggle" onclick="toggleSidebar()">☰</button>
+      <button class="sidebar-toggle" id="btnSidebarToggle" title="Toggle sidebar">☰</button>
     </div>
 
     <nav class="sidebar-nav">
       <div class="nav-section-label">MAIN MENU</div>
-      <div class="nav-item active" id="nav-dashboard" onclick="nav('dashboard')">
+      <div class="nav-item active" id="nav-dashboard">
         <span class="nav-icon">📊</span><span class="nav-label">Dashboard</span>
       </div>
-      <div class="nav-item" id="nav-billing" onclick="nav('billing')">
+      <div class="nav-item" id="nav-billing">
         <span class="nav-icon">🧾</span><span class="nav-label">POS Billing</span>
       </div>
-      <div class="nav-item" id="nav-inventory" onclick="nav('inventory')">
+      <div class="nav-item" id="nav-inventory">
         <span class="nav-icon">📦</span><span class="nav-label">Inventory</span>
         <span class="nav-badge" id="lowBadge">0</span>
       </div>
 
       <div class="nav-section-label">INTELLIGENCE</div>
-      <div class="nav-item" id="nav-predictions" onclick="nav('predictions')">
+      <div class="nav-item" id="nav-predictions">
         <span class="nav-icon">🤖</span><span class="nav-label">AI Predictions</span>
       </div>
-      <div class="nav-item" id="nav-reports" onclick="nav('reports')">
+      <div class="nav-item" id="nav-reports">
         <span class="nav-icon">📈</span><span class="nav-label">Reports</span>
       </div>
-      <div class="nav-item" id="nav-festivals" onclick="nav('festivals')">
+      <div class="nav-item" id="nav-festivals">
         <span class="nav-icon">🎊</span><span class="nav-label">Festival Calendar</span>
       </div>
 
       <div class="nav-section-label">SETTINGS</div>
-      <div class="nav-item" id="nav-settings" onclick="nav('settings')">
+      <div class="nav-item" id="nav-settings">
         <span class="nav-icon">⚙️</span><span class="nav-label">Settings</span>
       </div>
-      <div class="nav-item nav-item-admin" id="nav-admin" onclick="nav('admin')">
+      <div class="nav-item nav-item-admin" id="nav-admin">
         <span class="nav-icon">🔧</span><span class="nav-label">Admin Panel</span>
       </div>
     </nav>
@@ -73,20 +88,20 @@
           <div class="sidebar-user-name" id="sidebarUserName">admin</div>
           <div class="sidebar-user-role" id="sidebarUserRole">Admin Account</div>
         </div>
-        <button class="sidebar-logout-btn" onclick="doLogout()" title="Logout" style="display:none;">⬡</button>
+        <button class="sidebar-logout-btn" id="btnLogout" title="Logout" style="display:none;">⬡</button>
       </div>
     </div>
   </aside>
 
   <!-- Sidebar Overlay Backdrop for Mobile -->
-  <div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar(false)"></div>
+  <div class="sidebar-overlay" id="sidebarOverlay"></div>
 
   <!-- ── Main wrapper ──────────────────────────────────────── -->
   <div class="main-wrapper">
 
     <!-- Top Bar -->
     <header class="topbar">
-      <button class="mobile-menu-toggle" id="mobileMenuToggle" onclick="toggleSidebar(true)">☰</button>
+      <button class="mobile-menu-toggle" id="mobileMenuToggle">☰</button>
       <div class="topbar-left">
         <div class="breadcrumb">
           <span>Home</span>
@@ -103,7 +118,7 @@
       <div class="topbar-right">
         <div class="topbar-datetime" id="topbarDateTime"></div>
         <div class="mysql-live-pill"><span class="live-dot"></span>MySQL Live</div>
-        <div class="topbar-notification" id="topbarNotification" onclick="nav('inventory')">
+        <div class="topbar-notification" id="topbarNotification">
           🔔
           <span class="notification-dot" id="notifDot" style="display:none"></span>
         </div>
@@ -126,7 +141,7 @@
             <h1>Sales & Prediction Dashboard</h1>
             <p>AI-powered insights · Festival-aware forecasting · Live MySQL data</p>
           </div>
-          <button class="btn btn-outline btn-refresh" onclick="loadDashboard()">🔄 Refresh Data</button>
+          <button class="btn btn-outline btn-refresh" id="btnRefreshDashboard">🔄 Refresh Data</button>
         </div>
 
         <div class="stat-grid" id="kpiCards"></div>
@@ -136,14 +151,14 @@
             <div class="card-header">
               <div class="card-header-left">
                 <span class="card-header-icon">📈</span>
-                <span>7-Day AI Sales Forecast</span>
+                <span id="forecastChartTitle">AI Sales Forecast</span>
                 <span class="forecast-model-info" id="forecastModelInfo">RandomForest model · 1.5× festival multiplier applied</span>
               </div>
               <div class="card-header-actions">
                 <span class="pongal-badge" id="festWindowBadge" style="display:none">🟢 PONGAL WINDOW ACTIVE</span>
                 <div style="display:flex;gap:8px">
-                  <button class="pill-btn active" onclick="setForecastDays(7,this)">7 Days</button>
-                  <button class="pill-btn" onclick="setForecastDays(30,this)">30 Days</button>
+                  <button class="pill-btn active" id="btn7Days">7 Days</button>
+                  <button class="pill-btn" id="btn30Days">30 Days</button>
                 </div>
               </div>
             </div>
@@ -174,7 +189,7 @@
             <div class="form-row">
               <div class="form-group flex-2"><label>Product</label><select id="billProduct"></select></div>
               <div class="form-group" style="width:100px"><label>Qty</label><input type="number" id="billQty" min="1" value="1" style="width:100%"></div>
-              <div class="form-group" style="align-self:flex-end"><button class="btn btn-primary" onclick="addToCart()">+ Add</button></div>
+              <div class="form-group" style="align-self:flex-end"><button class="btn btn-primary" id="btnAddToCart">+ Add</button></div>
             </div>
             <p id="stockInfo" style="font-size:12px;color:var(--text-dim);margin-bottom:12px"></p>
             <div class="table-responsive">
@@ -184,7 +199,7 @@
               </table>
             </div>
             <div class="grand-total">Grand Total: <span id="cartTotal">₹0</span></div>
-            <button class="btn btn-success bill-btn" onclick="checkout()">🖨️ Generate Bill</button>
+            <button class="btn btn-success bill-btn" id="btnCheckout">🖨️ Generate Bill</button>
           </div>
           <div class="card flex-1">
             <div class="card-header"><span>🧾 Last Receipt</span></div>
@@ -205,11 +220,11 @@
           <div class="card-header" style="flex-wrap:wrap;gap:10px">
             <span>📋 Stock Overview</span>
             <div style="display:flex;gap:10px;flex-wrap:wrap;margin-left:auto;align-items:center">
-              <input type="text" id="invSearch" placeholder="🔍 Search..." style="width:200px;padding:8px 12px" oninput="filterInv(this.value)">
-              <select id="invCatFilter" style="width:160px" onchange="filterInv(document.getElementById('invSearch').value)">
+              <input type="text" id="invSearch" placeholder="🔍 Search..." style="width:200px;padding:8px 12px">
+              <select id="invCatFilter" style="width:160px">
                 <option value="">All Categories</option>
               </select>
-              <button id="btnAddProduct" class="btn btn-primary btn-sm" onclick="showAddProduct()" style="display:none">➕ Add Product</button>
+              <button id="btnAddProduct" class="btn btn-primary btn-sm" style="display:none">➕ Add Product</button>
             </div>
           </div>
           <div class="table-responsive">
@@ -222,7 +237,7 @@
       </div>
 
       <!-- ════ ADD PRODUCT MODAL ══════════════════════════ -->
-      <div id="addProductModal" class="modal-overlay" style="display:none" onclick="if(event.target===this)this.style.display='none'">
+      <div id="addProductModal" class="modal-overlay" style="display:none">
         <div class="modal-card">
           <h3 style="margin-bottom:20px">➕ Add New Product</h3>
           <div class="form-grid-2">
@@ -238,8 +253,8 @@
             <div class="form-group"><label>Min Stock Level</label><input type="number" id="newProdMin" min="1" value="50"></div>
           </div>
           <div style="display:flex;gap:12px;margin-top:16px">
-            <button class="btn btn-primary" onclick="submitAddProduct()">✅ Add Product</button>
-            <button class="btn btn-outline" onclick="document.getElementById('addProductModal').style.display='none'">Cancel</button>
+            <button class="btn btn-primary" id="btnSubmitAddProduct">✅ Add Product</button>
+            <button class="btn btn-outline" id="btnCancelAddProduct">Cancel</button>
           </div>
         </div>
       </div>
@@ -262,12 +277,12 @@
           <div class="card flex-1">
             <div class="card-header"><span>📂 Upload Sales Data (CSV / Excel)</span></div>
             <p style="font-size:12px;color:var(--text-dim);margin-bottom:16px">Upload your historical sales CSV with columns: Date, Product, Sales_Qty (and optionally Stock_Qty)</p>
-            <div class="drop-zone" id="dropZone" onclick="document.getElementById('csvFile').click()">
+            <div class="drop-zone" id="dropZone">
               <div class="dz-icon">☁️</div>
               <div class="dz-text">Click to upload or drag & drop</div>
               <div class="dz-sub">Supports .csv, .xlsx, .xls files</div>
             </div>
-            <input type="file" id="csvFile" accept=".csv,.xlsx,.xls" style="display:none" onchange="handleCSV(this)">
+            <input type="file" id="csvFile" accept=".csv,text/csv" style="display:none">
             <div id="csvStatus" style="margin-top:12px"></div>
 
             <div id="dataAnalysis" style="display:none;margin-top:16px">
@@ -278,8 +293,8 @@
             <hr class="divider">
             <div class="card-header"><span>🔮 Predict Sales from Uploaded Data</span></div>
             <div class="pill-tabs" id="predModeTabs">
-              <button class="pill-tab active" onclick="setPredMode('single',this)">📅 Single Date</button>
-              <button class="pill-tab" onclick="setPredMode('range',this)">📆 Date Range</button>
+              <button class="pill-tab active" id="btnPredSingle">📅 Single Date</button>
+              <button class="pill-tab" id="btnPredRange">📆 Date Range</button>
             </div>
             <div class="form-group"><label>Product</label>
               <select id="predProduct"><option value="">-- Select product --</option></select>
@@ -294,8 +309,8 @@
               </div>
             </div>
             <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:4px">
-              <button class="btn btn-primary" onclick="runPrediction(false)">🔮 Predict</button>
-              <button class="btn btn-outline" onclick="runPrediction(true)">🗄️ Use DB Data</button>
+              <button class="btn btn-primary" id="btnRunPrediction">🔮 Predict</button>
+              <button class="btn btn-outline" id="btnRunPredictionDB">🗄️ Use DB Data</button>
             </div>
             <p id="trainSource" style="font-size:12px;color:var(--text-dim);margin-top:10px"></p>
             <a href="/api/csv-template" class="dl-link" style="margin-bottom:16px;display:block;">📥 Download CSV Template</a>
@@ -396,7 +411,7 @@
                 <option value="Admin">Admin — Full Access</option>
               </select>
             </div>
-            <button class="btn btn-primary" onclick="createUser()">✅ Create User</button>
+            <button class="btn btn-primary" id="btnCreateUser">✅ Create User</button>
           </div>
           <div class="card flex-1"><div class="card-header"><span>📋 System Audit Log</span></div><div id="auditPanel"></div></div>
         </div>
@@ -409,7 +424,7 @@
       <div class="modal-card" style="max-width:500px;">
         <div class="modal-header" style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border); padding-bottom:12px; margin-bottom:12px;">
           <h3 style="margin:0;">📅 Daily Prediction Breakdown</h3>
-          <button class="close-btn" onclick="closeDailyAnalysis()" style="background:none; border:none; color:var(--text-dim); font-size:24px; cursor:pointer;">&times;</button>
+          <button class="close-btn" id="btnCloseDailyAnalysis" style="background:none; border:none; color:var(--text-dim); font-size:24px; cursor:pointer;">&times;</button>
         </div>
         <div class="modal-body">
           <p style="margin-bottom: 16px; color: var(--text-dim);" id="dailyAnalysisDate">Date</p>
@@ -425,6 +440,6 @@
   </div><!-- /main-wrapper -->
 </div><!-- /appShell -->
 
-<script src="app.js"></script>
+<script type="module" src="js/main.js"></script>
 </body>
 </html>

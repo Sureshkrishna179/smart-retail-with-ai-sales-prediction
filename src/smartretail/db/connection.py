@@ -1,34 +1,20 @@
-"""
-db_config.py — Database connection manager for SmartRetail AI
-Reads credentials from .env file and provides connection pooling.
-"""
-
-import os
-from dotenv import load_dotenv
+import logging
 import mysql.connector
 from mysql.connector import pooling, Error
+from smartretail.config import settings
 
-# Find the project root directory where the .env file is located
-backend_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.dirname(backend_dir)
-env_path = os.path.join(project_root, ".env")
-
-# Load environment variables from the root folder
-load_dotenv(dotenv_path=env_path)
+logger = logging.getLogger(__name__)
 
 DB_CONFIG = {
-    "host": os.getenv("DB_HOST", "localhost"),
-    "user": os.getenv("DB_USER", "root"),
-    "password": os.getenv("DB_PASSWORD", ""),
-    "database": os.getenv("DB_NAME", "retail_sales_db"),
+    "host": settings.db_host,
+    "user": settings.db_user,
+    "password": settings.db_password,
+    "database": settings.db_name,
 }
 
-# Connection pool for efficient database access
 _connection_pool = None
 
-
 def get_connection_pool():
-    """Create or return the existing connection pool."""
     global _connection_pool
     if _connection_pool is None:
         try:
@@ -39,24 +25,20 @@ def get_connection_pool():
                 **DB_CONFIG,
             )
         except Error as e:
-            print(f"❌ Error creating connection pool: {e}")
+            logger.error(f"Error creating connection pool: {e}")
             return None
     return _connection_pool
 
-
 def get_connection():
-    """Get a connection from the pool."""
     pool = get_connection_pool()
     if pool:
         try:
             return pool.get_connection()
         except Error as e:
-            print(f"❌ Error getting connection: {e}")
-            return None
+            logger.error(f"Error getting connection: {e}")
     return None
 
-
-def execute_query(query, params=None, fetch=False, fetchone=False):
+def db_query(query, params=None, fetch=True, fetchone=False):
     """Execute a query and optionally return results."""
     conn = get_connection()
     if conn is None:
@@ -66,16 +48,14 @@ def execute_query(query, params=None, fetch=False, fetchone=False):
         cursor = conn.cursor(dictionary=True)
         cursor.execute(query, params or ())
         if fetch:
-            result = cursor.fetchall()
-            return result
+            return cursor.fetchall()
         elif fetchone:
-            result = cursor.fetchone()
-            return result
+            return cursor.fetchone()
         else:
             conn.commit()
             return cursor.lastrowid
     except Error as e:
-        print(f"❌ Query error: {e}")
+        logger.error(f"Query error: {e}")
         conn.rollback()
         return None
     finally:
@@ -84,8 +64,7 @@ def execute_query(query, params=None, fetch=False, fetchone=False):
         if conn and conn.is_connected():
             conn.close()
 
-
-def execute_transaction(queries_params_list):
+def db_transaction(queries_params_list):
     """Execute multiple queries in a single transaction."""
     conn = get_connection()
     if conn is None:
@@ -98,7 +77,7 @@ def execute_transaction(queries_params_list):
         conn.commit()
         return True
     except Error as e:
-        print(f"❌ Transaction error: {e}")
+        logger.error(f"Transaction error: {e}")
         conn.rollback()
         return False
     finally:
@@ -106,13 +85,3 @@ def execute_transaction(queries_params_list):
             cursor.close()
         if conn and conn.is_connected():
             conn.close()
-
-
-def test_connection():
-    """Test the database connection."""
-    conn = get_connection()
-    if conn and conn.is_connected():
-        info = conn.get_server_info()
-        conn.close()
-        return True, info
-    return False, None

@@ -1,8 +1,23 @@
+// ─── XSS Prevention ───────────────────────────────────────────
+function escapeHtml(str) {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function fmt(num) {
+  return Number(num).toLocaleString('en-IN', { maximumFractionDigits: 2 });
+}
+
 // Global Error Visualizer for Debugging
 function showError(msg) {
   const errDiv = document.createElement('div');
   errDiv.style.cssText = 'position:fixed;top:0;left:0;width:100%;background:#ef4444;color:#fff;padding:12px;z-index:999999;font-family:monospace;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,0.3);text-align:center';
-  errDiv.innerHTML = `<strong>⚠️ Browser Console Error Detected:</strong> ${msg} <span style="cursor:pointer;margin-left:15px;text-decoration:underline" onclick="this.parentElement.remove()">[Dismiss]</span>`;
+  errDiv.innerHTML = `<strong>⚠️ Browser Console Error Detected:</strong> ${escapeHtml(msg)} <span style="cursor:pointer;margin-left:15px;text-decoration:underline" onclick="this.parentElement.remove()">[Dismiss]</span>`;
   document.body.appendChild(errDiv);
 }
 
@@ -16,8 +31,19 @@ window.addEventListener('unhandledrejection', function(event) {
 });
 
 
+// CRIT-05: In-memory token store — never persist JWTs to sessionStorage (XSS risk)
+// tokenStore lives only in this closure; cleared on page reload (correct security trade-off)
+const _tokenStore = (() => {
+  let _t = null;
+  return { set: (t) => { _t = t; }, get: () => _t, clear: () => { _t = null; } };
+})();
+
 const API = '';
-let products = [], cart = [], csvData = null, charts = {}, currentUser = { username: 'Guest', role: 'Admin' }, allProducts = [];
+const AUTH_KEY = 'smartretail_token';   // kept only for legacy session restore (removed below)
+const USER_KEY = 'smartretail_user';    // user info (non-secret) may stay in sessionStorage
+let products = [], cart = [], csvData = null, charts = {}, currentUser = null, allProducts = [];
+let forecastDays = 7;
+let modelsReady = false;
 
 // ─── Page breadcrumb names ─────────────────────────────────────
 const PAGE_NAMES = {
@@ -32,9 +58,14 @@ const PAGE_NAMES = {
 };
 
 function applyRoleUI() {
-  document.querySelectorAll('.nav-item').forEach(el => { el.style.display = 'flex'; });
+  const role = currentUser?.role || 'Staff';
+  const adminNav = document.getElementById('nav-admin');
+  if (adminNav) adminNav.style.display = role === 'Admin' ? 'flex' : 'none';
   const addBtn = document.getElementById('btnAddProduct');
-  if (addBtn) addBtn.style.display = 'inline-flex';
+  if (addBtn) addBtn.style.display = (role === 'Admin' || role === 'Manager') ? 'inline-flex' : 'none';
+  const logoutBtn = document.getElementById('btnLogout');
+  // CRIT-05: check _tokenStore instead of sessionStorage
+  if (logoutBtn) logoutBtn.style.display = _tokenStore.get() ? 'inline-flex' : 'none';
 }
 
 function updateUserDisplay() {
@@ -50,8 +81,64 @@ function updateUserDisplay() {
   if (avatar) avatar.textContent = initial;
 }
 
-function canAccess() {
+function canAccess(page) {
+  const role = currentUser?.role || 'Staff';
+  if (page === 'admin') return role === 'Admin';
+  if (page === 'inventory' && arguments.length) return ['Admin', 'Manager', 'Staff'].includes(role);
   return true;
+}
+
+function getAuthHeaders() {
+  const headers = { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' };
+  // CRIT-05: read token from in-memory store, not sessionStorage
+  const token = _tokenStore.get();
+  if (token) headers['Authorization'] = 'Bearer ' + token;
+  return headers;
+}
+
+async function doLogin() {
+  const username = document.getElementById('loginUsername')?.value?.trim();
+  const password = document.getElementById('loginPassword')?.value || '';
+  const errEl = document.getElementById('loginError');
+  if (!username || !password) {
+    if (errEl) { errEl.textContent = 'Enter username and password'; errEl.style.display = 'block'; }
+    return;
+  }
+  const res = await api('/api/login', { method: 'POST', body: { username, password } });
+  if (res.error || !res.success) {
+    if (errEl) { errEl.textContent = res.error || 'Login failed'; errEl.style.display = 'block'; }
+    return;
+  }
+  // CRIT-05: store JWT only in memory, never in sessionStorage
+  _tokenStore.set(res.token);
+  sessionStorage.setItem(USER_KEY, JSON.stringify(res.user));  // user info (non-secret) is fine
+  currentUser = res.user;
+  document.getElementById('loginOverlay')?.classList.remove('visible');
+  if (errEl) errEl.style.display = 'none';
+  initApp();
+  toast('Welcome, ' + res.user.username);
+}
+
+function doLogout() {
+  // CRIT-05: clear in-memory token
+  _tokenStore.clear();
+  sessionStorage.removeItem(USER_KEY);
+  currentUser = { username: 'Guest', role: 'Staff' };
+  applyRoleUI();
+  updateUserDisplay();
+  toast('Signed out');
+  const overlay = document.getElementById('loginOverlay');
+  if (overlay && overlay.dataset.requireAuth === '1') overlay.classList.add('visible');
+}
+
+function restoreSession() {
+  // CRIT-05: JWT is in-memory only — no token survives page reload (correct trade-off)
+  // Restore display name from non-secret user info stored in sessionStorage
+  try {
+    const raw = sessionStorage.getItem(USER_KEY);
+    if (raw) currentUser = JSON.parse(raw);
+  } catch (_) {}
+  if (!currentUser) currentUser = { username: 'admin', role: 'Admin' };
 }
 
 // ─── Mobile Sidebar Controls ───────────────────────────────────
@@ -92,7 +179,10 @@ function nav(page) {
   if (page === 'predictions') loadPredictions();
   if (page === 'reports')     loadReports();
   if (page === 'festivals')   loadFestivals();
-  if (page === 'admin')       loadAdmin();
+  if (page === 'admin') {
+    if (!canAccess('admin')) { toast('Access denied', 'error'); return; }
+    loadAdmin();
+  }
   
   toggleSidebar(false);
 }
@@ -107,17 +197,28 @@ function toast(msg, type = 'success') {
 // ─── API Helper ────────────────────────────────────────────────
 async function api(path, opts = {}) {
   try {
-    const headers = { 'Content-Type': 'application/json' };
     const r = await fetch(API + path, {
-      headers, ...opts,
-      body: opts.body ? JSON.stringify(opts.body) : undefined
+      headers: getAuthHeaders(),
+      ...opts,
+      body: opts.body ? JSON.stringify(opts.body) : undefined,
     });
+    let data = {};
+    const text = await r.text();
+    if (text) {
+      try { data = JSON.parse(text); } catch (_) { data = { error: text.slice(0, 200) }; }
+    }
     if (r.status === 429) {
-      const data = await r.json().catch(() => ({}));
       toast(data.error || 'Too many requests. Please slow down.', 'warning');
       return { error: 'Rate limited' };
     }
-    return await r.json();
+    if (r.status === 401) {
+      // CRIT-05: clear in-memory token on 401
+      _tokenStore.clear();
+      document.getElementById('loginOverlay')?.classList.add('visible');
+      return { error: data.error || 'Please sign in' };
+    }
+    if (!r.ok) return { error: data.error || `Request failed (${r.status})` };
+    return data;
   } catch (e) { return { error: e.message }; }
 }
 
@@ -136,6 +237,82 @@ function updateDateTime() {
 setInterval(updateDateTime, 1000);
 
 // ─── Dashboard ────────────────────────────────────────────────
+async function ensureModelsTrained() {
+  if (modelsReady) return true;
+  const train = await api('/api/train', { method: 'POST', body: { product: 'ALL' } });
+  if (train.success) {
+    modelsReady = true;
+    const info = document.getElementById('forecastModelInfo');
+    if (info) info.textContent = train.message || 'Models trained from database';
+    return true;
+  }
+  return false;
+}
+
+async function loadDashboardForecast(days) {
+  const start = new Date();
+  start.setDate(start.getDate() + 1);
+  const end = new Date(start);
+  end.setDate(end.getDate() + days - 1);
+  const fmtD = d => d.toISOString().slice(0, 10);
+  const pred = await api('/api/predict', {
+    method: 'POST',
+    body: { product: 'ALL', start_date: fmtD(start), end_date: fmtD(end) },
+  });
+  if (pred.error || !pred.predictions?.length) {
+    if (charts.sales) charts.sales.destroy();
+    const chartEl = document.getElementById('salesChart');
+    if (chartEl) {
+      charts.sales = new Chart(chartEl, {
+        type: 'line',
+        data: { labels: ['No forecast'], datasets: [{ label: 'Predicted units', data: [0], borderColor: '#8b5cf6' }] },
+        options: chartOpts(),
+      });
+    }
+    return;
+  }
+  const labels = pred.predictions.map(p => p.date);
+  const adjusted = pred.predictions.map(p => p.predicted_qty);
+  const historical = pred.historical || [];
+  if (charts.sales) charts.sales.destroy();
+  charts.sales = new Chart(document.getElementById('salesChart'), {
+    type: 'line',
+    data: {
+      labels: [...historical.map(h => h.date), ...labels],
+      datasets: [
+        {
+          label: 'Historical (units)',
+          data: [...historical.map(h => h.quantity), ...new Array(labels.length).fill(null)],
+          borderColor: '#10b981',
+          tension: 0.4,
+        },
+        {
+          label: 'AI forecast (units)',
+          data: [...new Array(historical.length).fill(null), ...adjusted],
+          borderColor: '#8b5cf6',
+          backgroundColor: 'rgba(139,92,246,0.12)',
+          fill: true,
+          tension: 0.4,
+        },
+      ],
+    },
+    options: chartOpts(),
+  });
+  const festBadge = document.getElementById('festWindowBadge');
+  const hasFest = pred.predictions.some(p => p.boosts?.length);
+  if (festBadge) {
+    festBadge.style.display = hasFest ? 'inline-block' : 'none';
+    if (hasFest) festBadge.textContent = '🟢 Festival boost in forecast window';
+  }
+  if (pred.accuracy != null) {
+    const lift = Math.max(0, Math.round(pred.accuracy - 50));
+    const kpiAi = document.querySelector('.kpi-card.ai .value');
+    if (kpiAi) kpiAi.textContent = pred.accuracy + '%';
+    const kpiSub = document.querySelector('.kpi-card.ai .sub');
+    if (kpiSub) kpiSub.textContent = `Model fit (R²) · ${days}-day horizon`;
+  }
+}
+
 async function loadDashboard() {
   updateDateTime();
   const rep = await api('/api/reports');
@@ -154,8 +331,8 @@ async function loadDashboard() {
   if (notifDot) notifDot.style.display = low > 0 ? 'block' : 'none';
 
   const todayRev = rep.today_revenue || 0;
-  const yesterdayRev = todayRev * 0.85;
-  const revChange = yesterdayRev > 0 ? ((todayRev - yesterdayRev) / yesterdayRev * 100).toFixed(1) : '0';
+  const yesterdayRev = rep.yesterday_revenue ?? 0;
+  const revChange = yesterdayRev > 0 ? ((todayRev - yesterdayRev) / yesterdayRev * 100).toFixed(1) : (todayRev > 0 ? '100' : '0');
   
   document.getElementById('kpiCards').innerHTML = `
     <div class="kpi-card revenue">
@@ -188,11 +365,11 @@ async function loadDashboard() {
     <div class="kpi-card ai">
       <div class="kpi-top">
         <div class="kpi-icon">✨</div>
-        <div class="kpi-trend festival">▲ Festival Boost</div>
+        <div class="kpi-trend festival">▲ ML Ready</div>
       </div>
-      <div class="value">+52%</div>
-      <div class="label">AI SALES FORECAST LIFT</div>
-      <div class="sub">Festival window active</div>
+      <div class="value">—</div>
+      <div class="label">AI MODEL FIT (R²)</div>
+      <div class="sub">Train on Predictions page or auto-load</div>
     </div>`;
 
   const alerts = await api('/api/inventory-alerts');
@@ -210,7 +387,7 @@ async function loadDashboard() {
       
       return `<div class="alert-item ${severity}">
         <div class="alert-item-header">
-          <span class="alert-item-name">🔥 ${a.name}</span>
+          <span class="alert-item-name">🔥 ${escapeHtml(a.name)}</span>
           <span class="alert-item-severity ${severity}">${severity.toUpperCase()}</span>
         </div>
         <div class="alert-stock-label">
@@ -229,29 +406,23 @@ async function loadDashboard() {
           <span>Days left: <strong>${daysLeft}d</strong></span>
         </div>
         <div class="alert-demand-tag">🔥 DEMAND SPIKE</div>
-        <button class="alert-restock-btn" onclick="restock(${a.id})">✨ Quick Restock</button>
+        <!-- NEW-02: data-restock-id instead of inline onclick — CSP-compliant, handled by delegated listener below -->
+        <button class="alert-restock-btn" data-restock-id="${parseInt(a.id)}">✨ Quick Restock</button>
       </div>`;
     }).join('');
+    // NEW-02: Event delegation — single listener handles all Restock buttons;
+    // avoids inline onclick which is blocked by CSP script-src 'self'.
+    ac.addEventListener('click', function _restockDelegate(e) {
+      const btn = e.target.closest('[data-restock-id]');
+      if (btn) restock(parseInt(btn.dataset.restockId, 10));
+    }, { once: true }); // replaced on every loadDashboard() call so use once:true
   } else {
     if (alertCountEl) alertCountEl.textContent = '0';
     ac.innerHTML = '<p style="color:var(--success)">✅ All stock levels healthy!</p>';
   }
   
-  if (rep.monthly_revenue?.length) renderSalesChart(rep.monthly_revenue);
-}
-
-function renderSalesChart(data) {
-  const chartEl = document.getElementById('salesChart');
-  if (!chartEl) return;
-  if (charts.sales) charts.sales.destroy();
-  charts.sales = new Chart(chartEl, { type:'line', data:{
-    labels: data.map(d=>d.month).reverse(),
-    datasets:[{ label:'Revenue (₹)', data:data.map(d=>d.revenue).reverse(),
-      borderColor:'#8b5cf6', backgroundColor:'rgba(139,92,246,0.1)', fill:true, tension:0.4, pointRadius:4,
-      pointBackgroundColor: data.map(()=>'#a78bfa'),
-      pointBorderColor: data.map(()=>'#8b5cf6'),
-    }]
-  }, options: chartOpts('₹') });
+  await ensureModelsTrained();
+  await loadDashboardForecast(forecastDays);
 }
 
 function chartOpts(prefix='') {
@@ -262,8 +433,11 @@ function chartOpts(prefix='') {
 }
 
 function setForecastDays(days, el) {
+  forecastDays = days;
   document.querySelectorAll('.pill-btn').forEach(b => b.classList.remove('active'));
   if (el) el.classList.add('active');
+  const title = document.getElementById('forecastChartTitle');
+  if (title) title.textContent = `${days}-Day AI Sales Forecast`;
   loadDashboard();
 }
 
@@ -282,12 +456,23 @@ function setPredMode(mode, el) {
 }
 
 // ─── POS Billing ──────────────────────────────────────────────
+function updateBillingStats(rep) {
+  if (!rep || rep.error) return;
+  const totalEl = document.getElementById('billingTotal');
+  const ordersEl = document.getElementById('ordersToday');
+  const avgEl = document.getElementById('avgOrder');
+  if (totalEl) totalEl.textContent = '₹' + fmt(rep.today_revenue || 0);
+  if (ordersEl) ordersEl.textContent = String(rep.orders_today ?? 0);
+  if (avgEl) avgEl.textContent = '₹' + fmt(rep.avg_order_value || 0);
+}
+
 async function loadBillingProducts() {
-  const res = await api('/api/products');
+  const [res, rep] = await Promise.all([api('/api/products'), api('/api/reports')]);
+  updateBillingStats(rep);
   products = res.products || [];
   const sel = document.getElementById('billProduct');
   sel.innerHTML = products.map(p =>
-    `<option value="${p.id}" data-price="${p.price}" data-stock="${p.current_stock}" data-unit="${p.unit}">${p.name} — ₹${p.price}/${p.unit}</option>`
+    `<option value="${parseInt(p.id)}" data-price="${parseFloat(p.price)}" data-stock="${parseInt(p.current_stock)}" data-unit="${escapeHtml(p.unit)}">${escapeHtml(p.name)} — ₹${parseFloat(p.price)}/${escapeHtml(p.unit)}</option>`
   ).join('');
   sel.onchange = () => updateStockInfo();
   updateStockInfo();
@@ -315,9 +500,14 @@ function removeFromCart(i) { cart.splice(i,1); renderCart(); }
 function renderCart() {
   const countEl = document.getElementById('cartCount');
   if (countEl) countEl.textContent = cart.length;
-  document.getElementById('cartItems').innerHTML = cart.length
-    ? cart.map((c,i) => `<tr><td>${c.name}</td><td>${c.quantity} ${c.unit}</td><td>₹${c.price}</td><td>₹${(c.price*c.quantity).toFixed(2)}</td><td><button class="remove-btn" onclick="removeFromCart(${i})">✕</button></td></tr>`).join('')
+  const cartTable = document.getElementById('cartItems');
+  cartTable.innerHTML = cart.length
+    ? cart.map((c,i) => `<tr><td>${escapeHtml(c.name)}</td><td>${c.quantity} ${escapeHtml(c.unit)}</td><td>₹${c.price}</td><td>₹${(c.price*c.quantity).toFixed(2)}</td><td><button class="remove-btn" data-remove-idx="${i}">✕</button></td></tr>`).join('')
     : '<tr><td colspan="5" style="color:var(--text-dim);text-align:center;padding:20px">Cart empty — add products above</td></tr>';
+  cartTable.onclick = function(e) {
+    const btn = e.target.closest('[data-remove-idx]');
+    if (btn) removeFromCart(parseInt(btn.dataset.removeIdx, 10));
+  };
   document.getElementById('cartTotal').textContent = '₹' + cart.reduce((s,c)=>s+c.price*c.quantity,0).toFixed(2);
 }
 
@@ -326,10 +516,10 @@ async function checkout() {
   const res = await api('/api/billing', { method:'POST', body:{ cart: cart.map(c=>({ product_id:c.product_id, quantity:c.quantity })) } });
   if (res.error) return toast(res.error,'error');
   document.getElementById('receiptArea').innerHTML =
-    `<div class="receipt-card"><div style="text-align:center;margin-bottom:12px"><strong>SmartRetail AI</strong><br><small>${res.timestamp}</small></div>
-    ${res.receipt.map(r=>`<div class="receipt-line"><span>${r.name} × ${r.qty} ${r.unit}</span><span>₹${r.total.toFixed(2)}</span></div>`).join('')}
+    `<div class="receipt-card"><div style="text-align:center;margin-bottom:12px"><strong>SmartRetail AI</strong><br><small>${escapeHtml(res.timestamp)}</small></div>
+    ${res.receipt.map(r=>`<div class="receipt-line"><span>${escapeHtml(r.name)} × ${r.qty} ${escapeHtml(r.unit)}</span><span>₹${r.total.toFixed(2)}</span></div>`).join('')}
     <div class="receipt-total">Grand Total: ₹${res.grand_total.toFixed(2)}</div></div>`;
-  cart = []; renderCart(); loadBillingProducts();
+  cart = []; renderCart(); loadBillingProducts(); loadDashboard();
   toast('Bill generated! Stock updated.');
 }
 
@@ -339,7 +529,7 @@ async function loadInventory() {
   allProducts = res.products || [];
   const cats = [...new Set(allProducts.map(p=>p.category))].sort();
   const catSel = document.getElementById('invCatFilter');
-  catSel.innerHTML = '<option value="">All Categories</option>' + cats.map(c=>`<option>${c}</option>`).join('');
+  catSel.innerHTML = '<option value="">All Categories</option>' + cats.map(c=>`<option>${escapeHtml(c)}</option>`).join('');
   const addBtn = document.getElementById('btnAddProduct');
   if (addBtn) addBtn.style.display = (currentUser?.role==='Admin'||currentUser?.role==='Manager') ? 'inline-flex' : 'none';
   
@@ -367,7 +557,8 @@ function filterInv(search) {
 }
 
 function renderInventoryTable(prods) {
-  document.getElementById('invTable').innerHTML = prods.map(p => {
+  const invTable = document.getElementById('invTable');
+  invTable.innerHTML = prods.map(p => {
     const status = p.current_stock < p.min_stock_level ? 'low' : p.current_stock < p.min_stock_level*2 ? 'warn' : 'ok';
     const tag = status==='low'
       ? `<span class="tag tag-red">🔴 Low</span>`
@@ -376,12 +567,16 @@ function renderInventoryTable(prods) {
       : `<span class="tag tag-green">🟢 OK</span>`;
     const canRestock = currentUser?.role==='Admin'||currentUser?.role==='Manager';
     return `<tr>
-      <td><strong>${p.name}</strong></td><td>${p.category}</td><td>${p.unit}</td><td>₹${p.price}</td>
-      <td class="stock-${status}">${p.current_stock}</td><td style="color:var(--text-dim)">${p.min_stock_level}</td>
+      <td><strong>${escapeHtml(p.name)}</strong></td><td>${escapeHtml(p.category)}</td><td>${escapeHtml(p.unit)}</td><td>₹${parseFloat(p.price)}</td>
+      <td class="stock-${status}">${parseInt(p.current_stock)}</td><td style="color:var(--text-dim)">${parseInt(p.min_stock_level)}</td>
       <td>${tag}</td>
-      <td>${canRestock?`<button class="btn btn-success btn-sm" onclick="restock(${p.id})">+ Restock</button>`:'—'}</td>
+      <td>${canRestock?`<button class="btn btn-success btn-sm" data-restock-id="${parseInt(p.id)}">+ Restock</button>`:'—'}</td>
     </tr>`;
   }).join('');
+  invTable.onclick = function(e) {
+    const btn = e.target.closest('[data-restock-id]');
+    if (btn) restock(parseInt(btn.dataset.restockId, 10));
+  };
 }
 
 async function restock(pid) {
@@ -413,28 +608,48 @@ async function submitAddProduct() {
 }
 
 // ─── AI Predictions ───────────────────────────────────────────
+function parseCSVStats(text) {
+  const lines = text.trim().split(/\r?\n/).filter(Boolean);
+  if (lines.length < 2) return null;
+  const products = new Set();
+  let rows = 0;
+  for (let i = 1; i < lines.length; i++) {
+    const parts = lines[i].split(',');
+    if (parts.length >= 3) {
+      products.add(parts[1].trim());
+      rows++;
+    }
+  }
+  const dates = lines.slice(1).map(l => l.split(',')[0]).filter(Boolean);
+  return { rows, products: products.size, from: dates[0], to: dates[dates.length - 1] };
+}
+
 function handleCSV(input) {
   const file = input.files[0];
   if (!file) return;
+  if (!file.name.toLowerCase().endsWith('.csv')) {
+    toast('Please upload a .csv file (Excel: save as CSV first)', 'error');
+    return;
+  }
   const reader = new FileReader();
   reader.onload = e => {
     csvData = e.target.result;
     document.getElementById('csvStatus').innerHTML =
-      `<span class="tag tag-green">✅ ${file.name} (${(file.size/1024).toFixed(1)} KB) — Ready to train</span>`;
+      /* NEW-03: escapeHtml() prevents HTML injection from a crafted filename */
+      `<span class="tag tag-green">✅ ${escapeHtml(file.name)} (${(file.size/1024).toFixed(1)} KB) — Ready to train</span>`;
+    const stats = parseCSVStats(csvData);
+    const analysis = document.getElementById('dataAnalysis');
+    const analysisStats = document.getElementById('analysisStats');
+    if (stats && analysis && analysisStats) {
+      analysis.style.display = 'block';
+      analysisStats.innerHTML = `
+        <span class="tag tag-purple">${stats.rows} rows</span>
+        <span class="tag tag-green">${stats.products} products</span>
+        <span class="tag tag-gold">${stats.from} → ${stats.to}</span>`;
+    }
     toast('CSV loaded! Click Predict to train.');
   };
   reader.readAsText(file);
-}
-
-const dz = document.getElementById('dropZone');
-if (dz) {
-  dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('dragover'); });
-  dz.addEventListener('dragleave', () => dz.classList.remove('dragover'));
-  dz.addEventListener('drop', e => {
-    e.preventDefault(); dz.classList.remove('dragover');
-    const f = e.dataTransfer.files[0];
-    if (f) { document.getElementById('csvFile').files = e.dataTransfer.files; handleCSV(document.getElementById('csvFile')); }
-  });
 }
 
 async function loadPredictions() {
@@ -444,7 +659,7 @@ async function loadPredictions() {
   const sel = document.getElementById('predProduct');
   if (sel) {
     let html = '<option value="ALL" style="font-weight:bold;color:var(--accent)">🌟 All Products</option>';
-    html += prods.map(p => `<option value="${p.name}">${p.name} (${p.category})</option>`).join('');
+    html += prods.map(p => `<option value="${escapeHtml(p.name)}">${escapeHtml(p.name)} (${escapeHtml(p.category)})</option>`).join('');
     sel.innerHTML = html;
   }
 }
@@ -472,6 +687,7 @@ async function runPrediction(forceDB = false) {
   const trainBody = forceDB ? { product } : { csv_data: csvData, product };
   const train = await api('/api/train', { method:'POST', body: trainBody });
   if (!train.success) return toast(train.error || train.message, 'error');
+  modelsReady = true;
   const src = train.source === 'database' ? '🗄️ Trained from database' : '📄 Trained from your CSV';
   document.getElementById('trainSource').textContent = `${src}: ${train.message}`;
   toast(train.message);
@@ -539,7 +755,7 @@ function renderPredictions(data, trainMessage) {
             <thead><tr><th>Product Name</th><th>Total Predicted Units</th><th>Model Fit (R²)</th></tr></thead>
             <tbody>
               ${sortedBreakdown.map(([prodName, qty]) => 
-                `<tr><td>${prodName}</td><td style="font-weight:bold;color:var(--accent)">${qty} units</td><td>${formatAccuracyCell(prodName, accuracyByProduct)}</td></tr>`
+                `<tr><td>${escapeHtml(prodName)}</td><td style="font-weight:bold;color:var(--accent)">${qty} units</td><td>${formatAccuracyCell(prodName, accuracyByProduct)}</td></tr>`
               ).join('')}
             </tbody>
           </table>
@@ -558,7 +774,8 @@ function renderPredictions(data, trainMessage) {
 
   window.currentPredictions = data.predictions;
 
-  document.getElementById('predResults').innerHTML =
+  const predResults = document.getElementById('predResults');
+  predResults.innerHTML =
     `<div style="margin-bottom:16px;display:flex;gap:8px;flex-wrap:wrap">
        <span class="tag tag-purple">Total Predicted: ${data.total_predicted} units</span>${srcLabel}${accTag}
      </div>
@@ -566,13 +783,18 @@ function renderPredictions(data, trainMessage) {
      <div class="table-responsive">
        <table><thead><tr><th>Date</th><th>Day</th><th>Base</th><th>Adjusted</th><th>Boosts</th></tr></thead><tbody>
        ${data.predictions.map(p => {
-          return `<tr class="clickable-row" style="cursor:pointer;" onclick="openDailyAnalysis('${p.date}')">
-           <td>${p.date}</td><td>${p.day}</td><td>${p.base_qty}</td>
+          return `<tr class="clickable-row" style="cursor:pointer;" data-date="${p.date}">
+           <td>${escapeHtml(p.date)}</td><td>${escapeHtml(p.day)}</td><td>${p.base_qty}</td>
            <td style="font-weight:700;color:var(--accent)">${p.predicted_qty}</td>
-           <td>${p.boosts.length ? p.boosts.map(b=>`<span class="tag tag-gold">${b}</span>`).join(' ') : '<span class="tag tag-green">Normal</span>'}</td></tr>`;
+           <td>${p.boosts.length ? p.boosts.map(b=>`<span class="tag tag-gold">${escapeHtml(b)}</span>`).join(' ') : '<span class="tag tag-green">Normal</span>'}</td></tr>`;
        }).join('')}
        </tbody></table>
      </div>`;
+     
+  predResults.onclick = function(e) {
+    const row = e.target.closest('[data-date]');
+    if (row) openDailyAnalysis(row.dataset.date);
+  };
      
   document.getElementById('aggregateBreakdownWrapper').innerHTML = breakdownHtml;
   
@@ -661,7 +883,8 @@ async function loadReports() {
       const pct = (p.total_revenue/max*100).toFixed(0);
       return `<div style="margin-bottom:12px">
         <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
-          <span>${i+1}. ${p.name}</span><span style="color:var(--success)">₹${fmt(p.total_revenue)}</span>
+          <!-- NEW-01: escapeHtml() prevents XSS from server-controlled product names -->
+          <span>${i+1}. ${escapeHtml(p.name)}</span><span style="color:var(--success)">₹${fmt(p.total_revenue)}</span>
         </div>
         <div style="background:rgba(255,255,255,0.06);border-radius:6px;height:8px;overflow:hidden">
           <div style="width:${pct}%;height:100%;background:linear-gradient(90deg,var(--accent),var(--pink));border-radius:6px"></div>
@@ -683,34 +906,44 @@ async function loadFestivals() {
 function festCard(f) {
   return `<div class="festival-card">
     <div class="mult-badge">${f.multiplier}x</div>
-    <div><div class="fest-name">${f.name}</div><div class="fest-date">${f.start} to ${f.end} • <span class="tag tag-gold" style="font-size:10px">${f.category}</span></div></div>
+    <div><div class="fest-name">${escapeHtml(f.name)}</div><div class="fest-date">${escapeHtml(f.start)} to ${escapeHtml(f.end)} • <span class="tag tag-gold" style="font-size:10px">${escapeHtml(f.category)}</span></div></div>
   </div>`;
 }
 
 // ─── Admin Panel ──────────────────────────────────────────────
 async function loadAdmin() {
+  if (!canAccess('admin')) {
+    toast('Admin access required', 'error');
+    nav('dashboard');
+    return;
+  }
   await Promise.all([loadUsers(), loadAudit()]);
 }
 
 async function loadUsers() {
   const res = await api('/api/users');
-  if (res.error) { document.getElementById('usersPanel').innerHTML = `<p style="color:var(--danger)">${res.error}</p>`; return; }
+  if (res.error) { document.getElementById('usersPanel').innerHTML = `<p style="color:var(--danger)">${escapeHtml(res.error)}</p>`; return; }
   const roleColors = { Admin:'tag-red', Manager:'tag-gold', Staff:'tag-green' };
-  document.getElementById('usersPanel').innerHTML = `
+  const usersPanel = document.getElementById('usersPanel');
+  usersPanel.innerHTML = `
     <div class="table-responsive">
       <table><thead><tr><th>Username</th><th>Role</th><th>Status</th><th>Last Login</th><th>Action</th></tr></thead><tbody>
       ${res.users.map(u => `<tr>
-        <td><strong>${u.username}</strong></td>
-        <td><span class="tag ${roleColors[u.role]||'tag-purple'}">${u.role}</span></td>
+        <td><strong>${escapeHtml(u.username)}</strong></td>
+        <td><span class="tag ${roleColors[u.role]||'tag-purple'}">${escapeHtml(u.role)}</span></td>
         <td><span class="tag ${u.is_active?'tag-green':'tag-red'}">${u.is_active?'Active':'Disabled'}</span></td>
-        <td style="font-size:11px;color:var(--text-dim)">${u.last_login||'Never'}</td>
-        <td>${u.username!==currentUser?.username
-          ? `<button class="btn btn-sm" style="background:${u.is_active?'rgba(239,68,68,0.15)':'rgba(16,185,129,0.15)'};color:${u.is_active?'var(--red)':'var(--green)'}" onclick="toggleUser(${u.id})">${u.is_active?'Disable':'Enable'}</button>`
+        <td style="font-size:11px;color:var(--text-dim)">${escapeHtml(u.last_login||'Never')}</td>
+        <td>${escapeHtml(u.username)!==currentUser?.username
+          ? `<button class="btn btn-sm" style="background:${u.is_active?'rgba(239,68,68,0.15)':'rgba(16,185,129,0.15)'};color:${u.is_active?'var(--red)':'var(--green)'}" data-toggle-user="${parseInt(u.id)}">${u.is_active?'Disable':'Enable'}</button>`
           : '<span style="font-size:11px;color:var(--text-dim)">Current</span>'
         }</td>
       </tr>`).join('')}
       </tbody></table>
     </div>`;
+  usersPanel.onclick = function(e) {
+    const btn = e.target.closest('[data-toggle-user]');
+    if (btn) toggleUser(parseInt(btn.dataset.toggleUser, 10));
+  };
 }
 
 async function toggleUser(uid) {
@@ -739,7 +972,7 @@ async function loadAudit() {
   document.getElementById('auditPanel').innerHTML = res.logs?.length
     ? `<div class="table-responsive">
          <table><thead><tr><th>User</th><th>Action</th><th>Details</th><th>Time</th></tr></thead><tbody>
-         ${res.logs.map(l=>`<tr><td>${l.username||'System'}</td><td>${l.action}</td><td>${l.details||'-'}</td><td style="font-size:11px">${l.created_at}</td></tr>`).join('')}
+         ${res.logs.map(l=>`<tr><td>${escapeHtml(l.username||'System')}</td><td>${escapeHtml(l.action)}</td><td>${escapeHtml(l.details||'-')}</td><td style="font-size:11px">${escapeHtml(l.created_at)}</td></tr>`).join('')}
          </tbody></table>
        </div>`
     : '<p style="color:var(--text-dim)">No audit logs yet</p>';
@@ -762,9 +995,29 @@ async function checkDB() {
 // ─── Auto Initialization ──────────────────────────────────────
 var _initialized = false;
 
+function bindProductSearch() {
+  const search = document.querySelector('.search-box input');
+  if (!search || search.dataset.bound) return;
+  search.dataset.bound = '1';
+  search.addEventListener('keydown', async e => {
+    if (e.key !== 'Enter') return;
+    const q = search.value.trim().toLowerCase();
+    if (!q) return;
+    nav('inventory');
+    const res = await api('/api/products');
+    allProducts = res.products || [];
+    filterInv(q);
+    search.value = '';
+  });
+}
+
 function initApp() {
   if (_initialized) return;
   _initialized = true;
+  restoreSession();
+  applyRoleUI();
+  updateUserDisplay();
+  bindProductSearch();
   console.log('[SmartRetail] Initializing app...');
 
   var navMap = {
@@ -927,10 +1180,56 @@ function initApp() {
     createUserBtn.addEventListener('click', function() { createUser(); });
   }
 
+  // MED-03: Wire all remaining buttons that previously had inline onclick=
+  const btnLogoutEl = document.getElementById('btnLogout');
+  if (btnLogoutEl) btnLogoutEl.addEventListener('click', doLogout);
+
+  const btnAddToCartEl = document.getElementById('btnAddToCart');
+  if (btnAddToCartEl) btnAddToCartEl.addEventListener('click', addToCart);
+
+  const btnCheckoutEl = document.getElementById('btnCheckout');
+  if (btnCheckoutEl) btnCheckoutEl.addEventListener('click', checkout);
+
+  const btnSubmitEl = document.getElementById('btnSubmitAddProduct');
+  if (btnSubmitEl) btnSubmitEl.addEventListener('click', submitAddProduct);
+
+  const btnCancelEl = document.getElementById('btnCancelAddProduct');
+  if (btnCancelEl) btnCancelEl.addEventListener('click', () => {
+    document.getElementById('addProductModal').style.display = 'none';
+  });
+
+  const btnRunPredEl = document.getElementById('btnRunPrediction');
+  if (btnRunPredEl) btnRunPredEl.addEventListener('click', () => runPrediction(false));
+
+  const btnRunPredDBEl = document.getElementById('btnRunPredictionDB');
+  if (btnRunPredDBEl) btnRunPredDBEl.addEventListener('click', () => runPrediction(true));
+
+  const btnPredSingleEl = document.getElementById('btnPredSingle');
+  if (btnPredSingleEl) btnPredSingleEl.addEventListener('click', function() { setPredMode('single', this); });
+
+  const btnPredRangeEl = document.getElementById('btnPredRange');
+  if (btnPredRangeEl) btnPredRangeEl.addEventListener('click', function() { setPredMode('range', this); });
+
+  const btn7DaysEl = document.getElementById('btn7Days');
+  if (btn7DaysEl) btn7DaysEl.addEventListener('click', function() { setForecastDays(7, this); });
+
+  const btn30DaysEl = document.getElementById('btn30Days');
+  if (btn30DaysEl) btn30DaysEl.addEventListener('click', function() { setForecastDays(30, this); });
+
+  const btnSidebarToggleEl = document.getElementById('btnSidebarToggle');
+  if (btnSidebarToggleEl) btnSidebarToggleEl.addEventListener('click', () => toggleSidebar());
+
+  const btnCreateUserEl = document.getElementById('btnCreateUser');
+  if (btnCreateUserEl) btnCreateUserEl.addEventListener('click', createUser);
+
+  const btnCloseDailyEl = document.getElementById('btnCloseDailyAnalysis');
+  if (btnCloseDailyEl) btnCloseDailyEl.addEventListener('click', closeDailyAnalysis);
+
   console.log('[SmartRetail] All event listeners bound successfully.');
 
-  applyRoleUI();
-  updateUserDisplay();
+  const loginBtn = document.getElementById('loginBtn');
+  if (loginBtn) loginBtn.addEventListener('click', doLogin);
+
   updateDateTime();
   checkDB();
   loadDashboard();
@@ -938,10 +1237,26 @@ function initApp() {
   console.log('[SmartRetail] App initialized successfully.');
 }
 
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', initApp);
-} else {
+function boot() {
+  restoreSession();
+  const overlay = document.getElementById('loginOverlay');
+  // CRIT-05: check in-memory token (no sessionStorage for JWT)
+  if (overlay && overlay.dataset.requireAuth === '1' && !_tokenStore.get()) {
+    overlay.classList.add('visible');
+    const loginBtnEl = document.getElementById('loginBtn');
+    if (loginBtnEl) loginBtnEl.addEventListener('click', doLogin);
+    // Also wire password Enter key
+    const pwdInput = document.getElementById('loginPassword');
+    if (pwdInput) pwdInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
+    return;
+  }
   initApp();
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', boot);
+} else {
+  boot();
 }
 
 // ── Daily Analysis Modal Functions ──
@@ -957,7 +1272,7 @@ function openDailyAnalysis(dateStr) {
     const sorted = Object.entries(pData.daily_breakdown).sort((a, b) => b[1] - a[1]);
     tbody.innerHTML = sorted
       .filter(([k, v]) => v > 0)
-      .map(([k, v]) => `<tr><td>${k}</td><td style="font-weight:bold;color:var(--accent)">${v} units</td></tr>`)
+      .map(([k, v]) => `<tr><td>${escapeHtml(k)}</td><td style="font-weight:bold;color:var(--accent)">${v} units</td></tr>`)
       .join('');
   } else {
     tbody.innerHTML = `<tr><td colspan="2" style="text-align:center">No breakdown data available for this date.</td></tr>`;

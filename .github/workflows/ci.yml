@@ -1,0 +1,175 @@
+name: SmartRetail CI
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master, develop]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Generate grocery sales dataset
+        run: python scripts/generate_grocery_sales.py
+
+      - name: Unit tests
+        run: pytest tests -m "not integration" --cov=backend --cov-report=xml
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          files: coverage.xml
+          fail_ci_if_error: false
+
+  # ─── LOW-01: Security scanning — SAST, SCA, and container image ──────
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install security tools
+        run: pip install bandit pip-audit
+
+      - name: SAST — Bandit (Python static analysis)
+        run: |
+          bandit -r backend/ src/ -ll --format json -o bandit-report.json
+          bandit -r backend/ src/ -ll
+
+      - name: SCA — pip-audit (dependency CVE scan)
+        run: pip-audit -r requirements.txt --output-format=json -o pip-audit-report.json || pip-audit -r requirements.txt
+
+      - name: Build image for scanning
+        run: docker build -t smartretail-scan:ci -f deploy/Dockerfile .
+        continue-on-error: true
+
+      - name: Container scan — Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'smartretail-scan:ci'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'
+          ignore-unfixed: true
+        continue-on-error: true   # advisory: don't block deploy on base-image OS CVEs
+
+      - name: Upload security reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-reports
+          path: |
+            bandit-report.json
+            pip-audit-report.json
+          retention-days: 30
+
+
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: testpass
+          MYSQL_DATABASE: retail_sales_db
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Setup database
+        env:
+          DB_HOST: 127.0.0.1
+          DB_USER: root
+          DB_PASSWORD: testpass
+          DB_NAME: retail_sales_db
+          PORT: "8765"
+          CORS_ORIGINS: http://localhost:8765
+          REQUIRE_AUTH: "0"
+        run: python backend/setup_database.py
+
+      - name: Generate grocery data
+        run: python scripts/generate_grocery_sales.py
+
+      - name: Integration tests
+        env:
+          RUN_INTEGRATION_TESTS: "1"
+        run: pytest tests -m integration
+
+  # ─── Deploy to GCP (main branch only) ──────────────────────────
+  deploy:
+    needs: [test, integration]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker asia-south1-docker.pkg.dev
+
+      - name: Build and push container image
+        run: |
+          IMAGE=asia-south1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/smartretail/api:${{ github.sha }}
+          docker build -t $IMAGE -f deploy/Dockerfile .
+          docker push $IMAGE
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy smartretail-api \
+            --image=asia-south1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/smartretail/api:${{ github.sha }} \
+            --platform=managed \
+            --region=asia-south1 \
+            --port=8765 \
+            --memory=512Mi \
+            --cpu=1 \
+            --min-instances=0 \
+            --max-instances=10 \
+            --allow-unauthenticated
+
+      - name: Deploy frontend to Firebase Hosting
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SA }}
+          channelId: live
