@@ -13,7 +13,7 @@
 <body>
 
 <!-- Login overlay (enforced when REQUIRE_AUTH=1 on server + data-require-auth="1") -->
-<div id="loginOverlay" class="login-overlay" data-require-auth="1">
+<div id="loginOverlay" class="login-overlay" data-require-auth="0">
   <div class="login-card">
     <div class="login-brand">
       <h1>🛒 SmartRetail AI</h1>
@@ -152,7 +152,7 @@
               <div class="card-header-left">
                 <span class="card-header-icon">📈</span>
                 <span id="forecastChartTitle">AI Sales Forecast</span>
-                <span class="forecast-model-info" id="forecastModelInfo">RandomForest model · 1.5× festival multiplier applied</span>
+                <span class="forecast-model-info" id="forecastModelInfo">Detrended HGBR · Log-linear trend + residual model</span>
               </div>
               <div class="card-header-actions">
                 <span class="pongal-badge" id="festWindowBadge" style="display:none">🟢 PONGAL WINDOW ACTIVE</span>
@@ -263,14 +263,14 @@
       <div class="section" id="sec-predictions">
         <div class="page-title">
           <h1>🤖 AI Sales Predictions</h1>
-          <p>Upload your sales CSV/Excel · AI analyzes past data · Festival-aware 7-day forecasts</p>
+          <p>Detrended HGBR · Log-linear trend decomposition · 500 Store×Product series</p>
         </div>
 
         <div class="stat-grid" id="predStats">
-          <div class="stat-card purple"><div class="stat-icon">%</div><div class="stat-val" id="modelAccuracy">—</div><div class="stat-lbl">MODEL FIT (R²)</div><div class="stat-sub" id="modelAccuracySub" style="font-size:11px;color:var(--text-dim);margin-top:4px"></div></div>
-          <div class="stat-card blue"><div class="stat-icon">🌲</div><div class="stat-val">RF</div><div class="stat-lbl">RANDOMFOREST REGRESSOR</div></div>
-          <div class="stat-card orange"><div class="stat-icon">🎉</div><div class="stat-val" id="festBoost">1.5x</div><div class="stat-lbl">FESTIVAL BOOST</div></div>
-          <div class="stat-card green"><div class="stat-icon">📄</div><div class="stat-val" id="recordsLoaded">—</div><div class="stat-lbl">RECORDS LOADED</div></div>
+          <div class="stat-card purple"><div class="stat-icon">📉</div><div class="stat-val" id="modelAccuracy">—</div><div class="stat-lbl">TEST MAE</div><div class="stat-sub" id="modelAccuracySub" style="font-size:11px;color:var(--text-dim);margin-top:4px">Mean Absolute Error on held-out test set</div></div>
+          <div class="stat-card blue hgbr-badge-card"><div class="stat-icon">⚡</div><div class="stat-val">HGBR</div><div class="stat-lbl">DETRENDED HISTGRADIENT BOOSTING</div></div>
+          <div class="stat-card orange"><div class="stat-icon">📈</div><div class="stat-val" id="improvementPct">—</div><div class="stat-lbl">IMPROVEMENT vs NAIVE</div></div>
+          <div class="stat-card green"><div class="stat-icon">🏪</div><div class="stat-val" id="recordsLoaded">500</div><div class="stat-lbl">STORE×PRODUCT SERIES</div></div>
         </div>
 
         <div class="content-row">
@@ -291,7 +291,8 @@
             </div>
 
             <hr class="divider">
-            <div class="card-header"><span>🔮 Predict Sales from Uploaded Data</span></div>
+            <div class="card-header"><span>🔮 Predict Sales</span></div>
+            <div id="modelStatusBadge" style="margin-bottom:12px"><span class="tag tag-gold">⏳ Checking model status...</span></div>
             <div class="pill-tabs" id="predModeTabs">
               <button class="pill-tab active" id="btnPredSingle">📅 Single Date</button>
               <button class="pill-tab" id="btnPredRange">📆 Date Range</button>
@@ -309,8 +310,9 @@
               </div>
             </div>
             <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:4px">
-              <button class="btn btn-primary" id="btnRunPrediction">🔮 Predict</button>
-              <button class="btn btn-outline" id="btnRunPredictionDB">🗄️ Use DB Data</button>
+              <button class="btn btn-primary" id="btnQuickPredict" style="background:linear-gradient(135deg,#8b5cf6,#06b6d4)">⚡ Quick Predict</button>
+              <button class="btn btn-outline" id="btnRunPrediction">🔮 Train & Predict</button>
+              <button class="btn btn-outline" id="btnRunPredictionDB">🗄️ Retrain from File</button>
             </div>
             <p id="trainSource" style="font-size:12px;color:var(--text-dim);margin-top:10px"></p>
             <a href="/api/csv-template" class="dl-link" style="margin-bottom:16px;display:block;">📥 Download CSV Template</a>
@@ -440,6 +442,6 @@
   </div><!-- /main-wrapper -->
 </div><!-- /appShell -->
 
-<script type="module" src="js/main.js"></script>
+<script defer src="js/main.js"></script>
 </body>
 </html>

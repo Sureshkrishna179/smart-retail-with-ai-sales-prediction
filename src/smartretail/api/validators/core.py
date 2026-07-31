@@ -92,8 +92,8 @@ def validate_predict(body):
 
 def validate_train(body):
     """Validate training request input. Returns (ok, error_msg)."""
-    product = body.get("product", "")
-    if not isinstance(product, str) or len(product.strip()) < 1 or len(product) > 100:
+    product = body.get("product", "ALL") or "ALL"
+    if not isinstance(product, str) or len(product) > 100:
         return False, "Product name must be 1-100 characters"
     csv_data = body.get("csv_data", "")
     if csv_data and len(csv_data) > 10 * 1024 * 1024:  # 10MB max

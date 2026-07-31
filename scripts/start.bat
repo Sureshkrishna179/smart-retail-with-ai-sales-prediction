@@ -1,15 +1,27 @@
 @echo off
 cd /d "%~dp0\.."
-echo Installing dependencies...
-py -3 -m pip install -q -r requirements.txt
-if errorlevel 1 exit /b 1
-if not exist "data\grocery_sales_realistic.csv" (
-  echo Generating grocery sales data...
-  py -3 scripts\generate_grocery_sales.py
+
+set PY_EXEC=py -3
+if exist ".venv\Scripts\python.exe" (
+    set PY_EXEC=.venv\Scripts\python.exe
 )
-echo Checking MySQL setup...
-py -3 backend\setup_database.py
+
+echo Installing dependencies...
+%PY_EXEC% -m pip install -q -r requirements.txt
 if errorlevel 1 exit /b 1
+
+if not exist "data\grocery_sales_realistic.csv" (
+    echo Generating grocery sales data...
+    %PY_EXEC% scripts\generate_grocery_sales.py
+)
+
+echo Checking MySQL setup...
+set PYTHONPATH=src
+%PY_EXEC% src\smartretail\db\migrations\setup_database.py
+if errorlevel 1 exit /b 1
+
 echo.
-echo Starting server — use the URL printed below
-py -3 backend\serve_dashboard.py
+echo Starting server...
+echo Open http://localhost:8765/ in your browser.
+echo.
+%PY_EXEC% -m smartretail.server

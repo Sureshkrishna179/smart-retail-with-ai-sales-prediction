@@ -1,0 +1,101 @@
+Product_ID,Product_Name,Category,Pack_Size,Base_Price_2021_INR
+P001,Basmati Rice,Rice & Grains,1 kg,99.96
+P002,Sona Masoori Rice,Rice & Grains,1 kg,88.28
+P003,Idli Rice,Rice & Grains,1 kg,71.96
+P004,Brown Rice,Rice & Grains,1 kg,103.95
+P005,Poha (Flattened Rice),Rice & Grains,500 g,38.12
+P006,Sooji (Semolina),Rice & Grains,500 g,32.34
+P007,Broken Wheat (Dalia),Rice & Grains,500 g,35.87
+P008,Ragi Flour,Rice & Grains,500 g,66.65
+P009,Vermicelli (Semiya),Rice & Grains,200 g,39.02
+P010,Sabudana (Sago),Rice & Grains,500 g,81.24
+P011,Bajra (Pearl Millet),Rice & Grains,1 kg,45.41
+P012,Whole Wheat Atta,Atta & Flour,5 kg,258.19
+P013,Multigrain Atta,Atta & Flour,5 kg,309.95
+P014,Maida (Refined Flour),Atta & Flour,1 kg,38.19
+P015,Besan (Gram Flour),Atta & Flour,1 kg,75.45
+P016,Rice Flour,Atta & Flour,500 g,32.75
+P017,Toor Dal,Pulses & Lentils,1 kg,142.17
+P018,Moong Dal,Pulses & Lentils,1 kg,130.99
+P019,Chana Dal,Pulses & Lentils,1 kg,102.96
+P020,Urad Dal,Pulses & Lentils,1 kg,131.65
+P021,Masoor Dal,Pulses & Lentils,1 kg,108.36
+P022,Rajma (Kidney Beans),Pulses & Lentils,1 kg,125.58
+P023,Kabuli Chana,Pulses & Lentils,1 kg,111.69
+P024,Black Chana,Pulses & Lentils,1 kg,100.99
+P025,Whole Green Moong,Pulses & Lentils,500 g,73.68
+P026,Whole Masoor,Pulses & Lentils,500 g,78.56
+P027,Dried Green Peas,Pulses & Lentils,500 g,54.99
+P028,Sunflower Oil,Cooking Oil & Ghee,1 L,150.57
+P029,Mustard Oil,Cooking Oil & Ghee,1 L,163.7
+P030,Groundnut Oil,Cooking Oil & Ghee,1 L,161.86
+P031,Coconut Oil,Cooking Oil & Ghee,500 ml,164.3
+P032,Soybean Oil,Cooking Oil & Ghee,1 L,125.12
+P033,Pure Ghee,Cooking Oil & Ghee,1 kg,486.51
+P034,Turmeric Powder,Spices & Masala,200 g,53.98
+P035,Red Chilli Powder,Spices & Masala,200 g,64.31
+P036,Coriander Powder,Spices & Masala,200 g,47.13
+P037,Garam Masala,Spices & Masala,100 g,69.14
+P038,Cumin Seeds,Spices & Masala,200 g,72.93
+P039,Mustard Seeds,Spices & Masala,200 g,40.26
+P040,Black Pepper,Spices & Masala,100 g,107.61
+P041,Cardamom,Spices & Masala,50 g,158.54
+P042,Cloves,Spices & Masala,50 g,109.81
+P043,Cinnamon,Spices & Masala,50 g,61.03
+P044,Bay Leaf,Spices & Masala,50 g,38.64
+P045,Asafoetida (Hing),Spices & Masala,50 g,90.35
+P046,Kasuri Methi,Spices & Masala,50 g,43.25
+P047,Sambar Powder,Spices & Masala,200 g,57.79
+P048,Chaat Masala,Spices & Masala,100 g,50.4
+P049,Pav Bhaji Masala,Spices & Masala,100 g,55.93
+P050,Biryani Masala,Spices & Masala,100 g,65.55
+P051,Sugar,Sugar & Sweeteners,1 kg,47.76
+P052,Iodized Salt,Sugar & Sweeteners,1 kg,23.43
+P053,Jaggery,Sugar & Sweeteners,1 kg,73.79
+P054,Honey,Sugar & Sweeteners,500 g,240.53
+P055,Black Tea,"Tea, Coffee & Beverages",250 g,139.89
+P056,Green Tea,"Tea, Coffee & Beverages",100 g,214.53
+P057,Instant Coffee,"Tea, Coffee & Beverages",200 g,227.08
+P058,Filter Coffee Powder,"Tea, Coffee & Beverages",200 g,163.72
+P059,Health Drink Mix,"Tea, Coffee & Beverages",500 g,225.88
+P060,Fruit Juice,"Tea, Coffee & Beverages",1 L,103.01
+P061,Soft Drink,"Tea, Coffee & Beverages",1.25 L,69.72
+P062,Bottled Water,"Tea, Coffee & Beverages",1 L,19.9
+P063,Toned Milk,Dairy,1 L,56.63
+P064,Full Cream Milk,Dairy,1 L,62.85
+P065,Curd,Dairy,400 g,37.81
+P066,Paneer,Dairy,200 g,90.85
+P067,Butter,Dairy,500 g,254.93
+P068,Cheese Slices,Dairy,200 g,134.07
+P069,Bread,Bakery,400 g,35.75
+P070,Pav (Pack of 6),Bakery,pack,31.91
+P071,Rusk,Bakery,200 g,51.58
+P072,Glucose Biscuits,Bakery,200 g,26.99
+P073,Potato Chips,Snacks & Namkeen,90 g,20.06
+P074,Mixture Namkeen,Snacks & Namkeen,200 g,75.39
+P075,Sev,Snacks & Namkeen,200 g,67.67
+P076,Banana Chips,Snacks & Namkeen,200 g,78.23
+P077,Roasted Peanuts,Snacks & Namkeen,500 g,95.43
+P078,Popcorn,Snacks & Namkeen,100 g,31.11
+P079,Salted Crackers,Snacks & Namkeen,200 g,45.38
+P080,Chocolate Biscuits,Snacks & Namkeen,100 g,32.32
+P081,Papad,Snacks & Namkeen,200 g,57.26
+P082,Almonds,Dry Fruits & Nuts,250 g,312.33
+P083,Cashews,Dry Fruits & Nuts,250 g,333.09
+P084,Raisins,Dry Fruits & Nuts,250 g,103.18
+P085,Walnuts,Dry Fruits & Nuts,250 g,381.1
+P086,Pistachios,Dry Fruits & Nuts,250 g,448.78
+P087,Dates,Dry Fruits & Nuts,500 g,163.78
+P088,Tomato Ketchup,Sauces & Pickles,500 g,109.13
+P089,Mango Pickle,Sauces & Pickles,400 g,96.62
+P090,Mixed Vegetable Pickle,Sauces & Pickles,400 g,84.17
+P091,Soy Sauce,Sauces & Pickles,200 ml,63.59
+P092,Vinegar,Sauces & Pickles,500 ml,54.26
+P093,Tamarind Paste,Sauces & Pickles,200 g,65.22
+P094,Frozen Green Peas,Frozen & Ready-to-Eat,500 g,76.84
+P095,Frozen Paratha (Pack of 5),Frozen & Ready-to-Eat,pack,120.84
+P096,Instant Soup Mix,Frozen & Ready-to-Eat,pack,64.81
+P097,Instant Noodles (Pack of 4),Frozen & Ready-to-Eat,pack,57.84
+P098,Corn Flakes,Breakfast Cereals,500 g,171.38
+P099,Oats,Breakfast Cereals,1 kg,131.02
+P100,Muesli,Breakfast Cereals,500 g,260.79

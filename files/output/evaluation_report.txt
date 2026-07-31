@@ -1,0 +1,28 @@
+==============================================================================
+  AI Sales Forecasting — Model Comparison Report
+  Train: 2021-2024   |   Validation: 2025   |   Forecast: 2026
+  500 Store×Product series   |   182,500 validation rows
+==============================================================================
+
+Model                                     MAE       RMSE     WAPE     SMAPE
+---------------------------------------------------------------------------
+Seasonal Naive                          6.164      9.302   0.2161    0.2291
+Plain HGBR (raw)                        4.786      7.244   0.1677    0.1712
+Detrended HGBR                          3.567      5.594   0.1250    0.1250
+
+Notes:
+  WAPE  = Weighted Absolute Percentage Error (robust to zero actuals)
+  SMAPE = Symmetric MAPE
+  HGBR  = HistGradientBoostingRegressor (sklearn histogram GB, ≡ LightGBM)
+
+  2024→2025 YoY Growth Rate: 4.70%
+  Best model by MAE: Detrended HGBR
+  Detrending improvement over Plain HGBR: 25.46% MAE reduction
+
+==============================================================================
+  Trend Sanity Check (2026 vs 2025 totals)
+==============================================================================
+  2025 actual total units:             5,206,994
+  2026 Detrended HGBR:                 6,478,801  (+24.4%)
+  2026 Plain HGBR:                     5,936,327  (+14.0%)
+  Historical YoY growth rate:               +4.7%

@@ -6,11 +6,10 @@ from pathlib import Path
 
 import pytest
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-BACKEND_DIR = PROJECT_ROOT / "backend"
+SRC_DIR = PROJECT_ROOT / "src"
 
-if str(BACKEND_DIR) not in sys.path:
-    sys.path.insert(0, str(BACKEND_DIR))
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
 
 
 @pytest.fixture
@@ -34,9 +33,12 @@ def grocery_csv_text(grocery_csv_path):
 def mysql_available():
     """Return True if MySQL is reachable with project .env settings."""
     try:
-        from db_config import test_connection
-        ok, _info = test_connection()
-        return bool(ok)
+        from smartretail.db.connection import get_connection
+        conn = get_connection()
+        if conn and conn.is_connected():
+            conn.close()
+            return True
+        return False
     except Exception:
         return False
 

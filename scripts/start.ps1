@@ -1,23 +1,30 @@
-# SmartRetail AI — local run (Windows)
+# SmartRetail AI — local run (Windows PowerShell)
 $ErrorActionPreference = "Stop"
 $Root = Split-Path $PSScriptRoot -Parent
 Set-Location $Root
 
+# Determine Python executable (prefer .venv Python if available, fallback to py -3)
+$PyExec = "py -3"
+if (Test-Path "$Root\.venv\Scripts\python.exe") {
+    $PyExec = "$Root\.venv\Scripts\python.exe"
+}
+
 Write-Host "Installing Python dependencies..."
-py -3 -m pip install -q -r requirements.txt
+& $PyExec -m pip install -q -r requirements.txt
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 if (-not (Test-Path "data\grocery_sales_realistic.csv")) {
     Write-Host "Generating grocery sales dataset..."
-    py -3 scripts\generate_grocery_sales.py
+    & $PyExec scripts\generate_grocery_sales.py
 }
 
 Write-Host "Checking MySQL setup..."
-py -3 backend\setup_database.py
+$env:PYTHONPATH="src"
+& $PyExec src\smartretail\db\migrations\setup_database.py
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 Write-Host ""
-Write-Host "Starting server — open the URL printed below in your browser."
-Write-Host "Use http://localhost:<PORT>/  (not file:// on dashboard.html)"
+Write-Host "Starting server..."
+Write-Host "Open http://localhost:8765/ in your browser."
 Write-Host ""
-py -3 backend\serve_dashboard.py
+& $PyExec -m smartretail.server

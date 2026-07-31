@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_ROOT / "backend"))
+sys.path.insert(0, str(_ROOT / "src"))
 from paths import GROCERY_CSV  # noqa: E402
 
 # SKU-level products aligned with setup_database.py catalog
