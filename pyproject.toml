@@ -9,7 +9,7 @@ authors = [{ name = "SmartRetail Team" }]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["backend", "src"]
+pythonpath = ["src"]
 markers = [
     "integration: requires MySQL",
     "slow: longer-running checks",
@@ -18,8 +18,8 @@ addopts = "-ra --strict-markers -q"
 filterwarnings = ["ignore::DeprecationWarning"]
 
 [tool.coverage.run]
-source = ["backend"]
-omit = ["backend/legacy/*"]
+source = ["src"]
+omit = ["src/smartretail/legacy/*"]
 
 [tool.ruff]
 line-length = 100

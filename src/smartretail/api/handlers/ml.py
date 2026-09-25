@@ -5,6 +5,7 @@ import numpy as np
 from datetime import datetime, timedelta
 from typing import Any, cast, Optional, TypedDict
 from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_absolute_error, mean_squared_error
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,98 @@ FESTIVALS = [
 ]
 
 FESTIVAL_WINDOW = 5
+
+# ── 7-feature pipeline constants & helpers (used by CSV RandomForest) ────────
+FEATURE_COLUMNS = [
+    "Year", "Month", "Day", "DayOfWeek",
+    "IsWeekend", "IsPayDay", "DaysToFestival",
+]
+
+
+def _days_to_nearest_festival(dt: datetime) -> int:
+    """Return the number of days to the nearest festival date."""
+    min_dist = 365
+    for _name, sm, sd, em, ed, _mult in FESTIVALS:
+        try:
+            start = datetime(dt.year, sm, sd)
+        except ValueError:
+            continue
+        dist = abs((start - dt).days)
+        if dist < min_dist:
+            min_dist = dist
+        # Also check the previous / next year edges
+        for offset in (-1, 1):
+            try:
+                alt = datetime(dt.year + offset, sm, sd)
+                d = abs((alt - dt).days)
+                if d < min_dist:
+                    min_dist = d
+            except ValueError:
+                pass
+    return min_dist
+
+
+def _build_inference_features(dt: datetime) -> np.ndarray:
+    """Build a (1, 7) numpy array matching FEATURE_COLUMNS for a given date."""
+    row = [
+        dt.year,
+        dt.month,
+        dt.day,
+        dt.weekday(),
+        1 if dt.weekday() >= 5 else 0,                    # IsWeekend
+        1 if dt.day in (1, 15, 28, 29, 30, 31) else 0,    # IsPayDay
+        _days_to_nearest_festival(dt),                     # DaysToFestival
+    ]
+    return np.array([row], dtype=float)
+
+
+def _build_feature_df(prod_data: pd.DataFrame) -> pd.DataFrame:
+    """Build a 7-column feature DataFrame for training."""
+    dt_accessor = cast(Any, prod_data['Date'].dt)
+    return pd.DataFrame({
+        'Year':           dt_accessor.year,
+        'Month':          dt_accessor.month,
+        'Day':            dt_accessor.day,
+        'DayOfWeek':      dt_accessor.dayofweek,
+        'IsWeekend':      (dt_accessor.dayofweek >= 5).astype(int),
+        'IsPayDay':       prod_data['Date'].apply(
+                              lambda d: 1 if d.day in (1, 15, 28, 29, 30, 31) else 0),
+        'DaysToFestival': prod_data['Date'].apply(
+                              lambda d: _days_to_nearest_festival(d)),
+    })
+
+
+def build_metrics_by_product(
+    product_names: list[str],
+) -> dict[str, Optional[dict[str, float]]]:
+    """Return per-product {rmse, mae} metrics from _models store."""
+    result: dict[str, Optional[dict[str, float]]] = {}
+    for name in product_names:
+        info = _models.get(name)
+        if info and "metrics" in info:
+            result[name] = info["metrics"]
+        else:
+            result[name] = None
+    return result
+
+
+def average_metrics(
+    metrics_by_product: dict[str, Optional[dict[str, float]]],
+) -> Optional[dict[str, float]]:
+    """Return average rmse/mae across products that have metrics."""
+    rmse_vals = []
+    mae_vals = []
+    for m in metrics_by_product.values():
+        if m is not None:
+            rmse_vals.append(m["rmse"])
+            mae_vals.append(m["mae"])
+    if not rmse_vals:
+        return None
+    return {
+        "rmse": round(sum(rmse_vals) / len(rmse_vals), 4),
+        "mae":  round(sum(mae_vals) / len(mae_vals), 4),
+    }
+
 
 def is_festival_period(target_date):
     for name, sm, sd, em, ed, mult in FESTIVALS:
@@ -147,23 +240,25 @@ def train_model_from_csv(csv_text, product_name):
                 
             assert isinstance(prod_data, pd.DataFrame)
             prod_data = prod_data.sort_values(by='Date')
-            dt_accessor = cast(Any, prod_data['Date'].dt)
-            prod_data['Year']      = dt_accessor.year
-            prod_data['Month']     = dt_accessor.month
-            prod_data['Day']       = dt_accessor.day
-            prod_data['DayOfWeek'] = dt_accessor.dayofweek
 
-            X = prod_data[['Year','Month','Day','DayOfWeek']]
+            X = _build_feature_df(prod_data)
             y = prod_data['Sales_Qty'].astype(float)
 
             model = RandomForestRegressor(n_estimators=100, random_state=42)
             model.fit(X, y)
+
+            y_pred = model.predict(X)
+            rmse = float(np.sqrt(mean_squared_error(y, y_pred)))
+            mae  = float(mean_absolute_error(y, y_pred))
             
             r2_score = model.score(X, y)
             accuracy = max(0.0, min(100.0, round(r2_score * 100, 1)))
             
             avg = float(cast(Any, y.mean()))
-            _models[p_name] = {"model": model, "avg": avg, "accuracy": accuracy, "source": "csv"}
+            _models[p_name] = {
+                "model": model, "avg": avg, "accuracy": accuracy, "source": "csv",
+                "metrics": {"rmse": round(rmse, 4), "mae": round(mae, 4)},
+            }
             total_trained += 1
             trained_names.append(p_name)
             

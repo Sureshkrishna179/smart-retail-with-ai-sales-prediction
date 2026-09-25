@@ -1,13 +1,13 @@
 """Unit tests for API input validation."""
 
-from serve_dashboard import (
+from smartretail.api.validators.core import (
     validate_add_product,
     validate_billing,
-    validate_create_user,
     validate_predict,
     validate_restock,
     validate_train,
 )
+from smartretail.api.validators.products import validate_create_user
 
 
 def test_validate_billing_ok():

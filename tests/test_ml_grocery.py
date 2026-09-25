@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from serve_dashboard import (
+from smartretail.api.handlers.ml import (
     _models, predict_sales, train_model_from_csv,
     build_metrics_by_product, average_metrics,
     FEATURE_COLUMNS, _days_to_nearest_festival, _build_inference_features,

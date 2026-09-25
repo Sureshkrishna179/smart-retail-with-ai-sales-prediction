@@ -9,7 +9,7 @@ from urllib.request import Request, urlopen
 
 import pytest
 
-from serve_dashboard import APIHandler
+from smartretail.server import DashboardHandler as APIHandler
 
 
 def _free_port():
@@ -67,7 +67,7 @@ def test_dashboard_html_served(api_server):
 
 @pytest.mark.integration
 def test_mysql_connection(requires_mysql):
-    from db_config import get_connection
+    from smartretail.db.connection import get_connection
 
     conn = get_connection()
     assert conn is not None

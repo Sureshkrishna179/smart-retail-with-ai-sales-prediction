@@ -1,6 +1,6 @@
 {
   "venvPath": ".",
   "venv": ".venv",
-  "extraPaths": ["backend", "src"],
-  "exclude": ["backend/legacy", "deploy", ".venv"]
+  "extraPaths": ["src"],
+  "exclude": [".venv"]
 }

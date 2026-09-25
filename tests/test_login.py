@@ -9,7 +9,7 @@ from urllib.request import Request, urlopen
 
 import pytest
 
-from serve_dashboard import APIHandler
+from smartretail.server import DashboardHandler as APIHandler
 
 
 @pytest.fixture

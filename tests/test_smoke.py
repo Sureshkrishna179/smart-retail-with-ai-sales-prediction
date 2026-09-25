@@ -7,16 +7,12 @@ import pytest
 
 def test_project_structure(project_root: Path):
     required = [
-        "backend/serve_dashboard.py",
-        "backend/setup_database.py",
-        "backend/db_config.py",
-        "backend/paths.py",
+        "src/smartretail/server.py",
+        "src/smartretail/api/handlers/ml.py",
+        "src/smartretail/config.py",
         "frontend/dashboard.html",
         "frontend/app.js",
         "requirements.txt",
-        "deploy/Dockerfile",
-        "deploy/docker-compose.yml",
-        "scripts/start.ps1",
         ".env.example",
         "LICENSE",
         "CONTRIBUTING.md",
@@ -48,8 +44,8 @@ def test_core_dependencies_import(module_name: str):
     __import__(module_name)
 
 
-def test_serve_dashboard_imports():
-    import serve_dashboard  # noqa: F401 — backend on pythonpath
+def test_smartretail_ml_imports():
+    from smartretail.api.handlers import ml  # noqa: F401
 
-    assert hasattr(serve_dashboard, "is_festival_period")
-    assert hasattr(serve_dashboard, "train_model_from_csv")
+    assert hasattr(ml, "is_festival_period")
+    assert hasattr(ml, "train_model_from_csv")

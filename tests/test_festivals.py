@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from serve_dashboard import FESTIVALS, get_demand_multiplier, is_festival_period
+from smartretail.api.handlers.ml import FESTIVALS, get_demand_multiplier, is_festival_period
 
 
 def test_pongal_window_detected():

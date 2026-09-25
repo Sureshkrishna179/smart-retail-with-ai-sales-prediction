@@ -385,6 +385,27 @@ def get_product_lookup() -> dict:
     return lookup
 
 
+def get_id_to_name_lookup() -> dict:
+    """
+    Build Product_ID → Product_Name reverse lookup from products.csv.
+    Returns dict like {"P001": "Basmati Rice", ...}.
+    Used by the API layer to display human-readable product names in predictions.
+    """
+    lookup: dict[str, str] = {}
+    if PRODUCTS_CSV.exists():
+        try:
+            prod = pd.read_csv(PRODUCTS_CSV)
+            prod.columns = prod.columns.str.strip()
+            for _, row in prod.iterrows():
+                pid = str(row.get("Product_ID", "")).strip()
+                name = str(row.get("Product_Name", "")).strip()
+                if pid and name:
+                    lookup[pid] = name
+        except Exception as e:
+            logger.warning("Could not build id-to-name lookup: {}".format(e))
+    return lookup
+
+
 def get_csv_products() -> list[dict]:
     """Return list of products from products.csv for API consumption."""
     if not PRODUCTS_CSV.exists():
