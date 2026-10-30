@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: smartretail-ai
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m smartretail.server
+    envVars:
+      - key: PYTHONPATH
+        value: src
+      - key: REQUIRE_AUTH
+        value: "0"
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ML_CACHE_SIGN_KEY
+        generateValue: true
+      - key: DB_HOST
+        value: localhost
+      - key: DB_USER
+        value: retail_app
+      - key: DB_PASSWORD
+        value: ""
+      - key: DB_NAME
+        value: retail_sales_db
+

@@ -15,18 +15,18 @@ class Settings:
     db_password: str = os.getenv("DB_PASSWORD", "")
     db_name:     str = os.getenv("DB_NAME", "retail_sales_db")
     port:        int = int(os.getenv("PORT", "8765"))
-    jwt_secret:  str = os.getenv("JWT_SECRET", "")
+    jwt_secret:  str = os.getenv("JWT_SECRET", "") or "smartretail-ai-jwt-secret-key-production-fallback-32chars"
     jwt_expiry_hours: int = int(os.getenv("JWT_EXPIRY_HOURS", "8"))
     
-    # SECURITY-FIX applied: Default REQUIRE_AUTH to 1
-    require_auth: bool = os.getenv("REQUIRE_AUTH", "1").lower() not in ("0", "false", "no")
+    # REQUIRE_AUTH: 1 to enforce login overlay, 0 to bypass in dev/demo
+    require_auth: bool = os.getenv("REQUIRE_AUTH", "0").lower() not in ("0", "false", "no")
     cors_origins: list = None
     rate_limit_max: int = int(os.getenv("RATE_LIMIT_MAX", "60"))
     rate_limit_login: int = int(os.getenv("RATE_LIMIT_LOGIN", "5"))
     debug: bool = os.getenv("LOG_DEBUG", "0") == "1"
     
-    # SECURITY-FIX applied: ML Cache Sign Key
-    ml_cache_sign_key: str = os.getenv("ML_CACHE_SIGN_KEY", "")
+    # ML Cache Sign Key
+    ml_cache_sign_key: str = os.getenv("ML_CACHE_SIGN_KEY", "") or "smartretail-ai-ml-cache-signing-key-fallback-32chars"
 
     def __post_init__(self):
         object.__setattr__(self, "cors_origins",

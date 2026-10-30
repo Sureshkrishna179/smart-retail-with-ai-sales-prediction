@@ -1,1 +1,1 @@
-web: PYTHONPATH=src python src/smartretail/server.py
+web: python -m smartretail.server
