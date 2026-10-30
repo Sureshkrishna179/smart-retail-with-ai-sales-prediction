@@ -33,7 +33,7 @@ def test_validate_create_user_weak_password():
 
 
 def test_validate_create_user_ok():
-    ok, err = validate_create_user({"username": "store_mgr", "password": "secure1", "role": "Manager"})
+    ok, err = validate_create_user({"username": "store_mgr", "password": "SecurePassword1!", "role": "Manager"})
     assert ok is True
 
 

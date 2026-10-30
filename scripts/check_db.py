@@ -1,8 +1,12 @@
 import sys
 from pathlib import Path
 
-# Add src directory to path
-sys.path.insert(0, str(Path(__file__).parent / "src"))
+# Safe Windows UTF-8 stdout configuration
+if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
+# Add src directory to path (scripts/ -> root -> src)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from smartretail.db.connection import get_connection
 
@@ -12,7 +16,7 @@ conn = get_connection()
 if conn is not None and conn.is_connected():
     print("✅ Successfully connected to the database!")
     
-    # Let's check how many products and sales are in there
+    # Check products and sales count
     cursor = conn.cursor(dictionary=True)
     
     cursor.execute("SELECT COUNT(*) as count FROM products")

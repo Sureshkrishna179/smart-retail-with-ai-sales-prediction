@@ -13,7 +13,7 @@ from smartretail.api.handlers.auth import handle_login
 from smartretail.api.handlers.products import handle_get_products, handle_add_product
 from smartretail.api.handlers.inventory import handle_inventory_alerts, handle_restock
 from smartretail.api.handlers.sales import handle_billing, handle_get_reports, handle_csv_template
-from smartretail.api.handlers.ml import handle_train, handle_predict, handle_model_info
+from smartretail.api.handlers.ml import handle_train, handle_predict, handle_model_info, handle_get_trained_products
 from smartretail.api.handlers.users import handle_get_users, handle_create_user, handle_toggle_user, handle_audit_log
 from smartretail.api.handlers.system import handle_db_status, handle_get_festivals, handle_get_csv_products
 from smartretail.etl.ingestion import handle_etl_upload
@@ -37,6 +37,7 @@ router.add_route("GET", "/api/db-status", handle_db_status)
 router.add_route("GET", "/api/festivals", handle_get_festivals)
 router.add_route("GET", "/api/model-info", handle_model_info)
 router.add_route("GET", "/api/products-csv", handle_get_csv_products)
+router.add_route("GET", "/api/trained-products", handle_get_trained_products)
 router.add_route("POST", "/api/v1/etl/upload", handle_etl_upload)
 
 

@@ -94,9 +94,10 @@ def handle_csv_template(request):
     request.send_header("Content-Disposition", "attachment; filename=sales_template.csv")
     
     origin = request.headers.get("Origin", "")
-    from smartretail.server import CORS_ORIGINS
-    if origin in CORS_ORIGINS:
-        request.send_header("Access-Control-Allow-Origin", origin)
+    from smartretail.api.middleware.cors import get_allowed_origin
+    allowed = get_allowed_origin(origin)
+    if allowed:
+        request.send_header("Access-Control-Allow-Origin", allowed)
         
     request.end_headers()
     request.wfile.write(template.encode())

@@ -24,18 +24,18 @@
 ┌──────────────────────────┐     ┌──────────────────────────────────┐
 │  Frontend SPA            │     │  Backend — Python HTTP Server    │
 │  • dashboard.html        │────▶│  • JWT Auth + Rate Limiter       │
-│  • app.js (51KB)         │     │  • Input Validation (OWASP)      │
-│  • styles.css            │     │  • 14 REST API Endpoints         │
+│  • js/main.js            │     │  • Input Validation (OWASP)      │
+│  • css/styles.css        │     │  • 14 REST API Endpoints (8765)  │
 └──────────────────────────┘     └────────────┬─────────────────────┘
                                               │
                     ┌─────────────────────────┼──────────────────────┐
                     │                         │                      │
           ┌─────────▼────────┐   ┌────────────▼──────┐   ┌──────────▼──────┐
-          │  ML Engine       │   │  Festival Engine   │   │  MySQL 8.0      │
-          │  • RandomForest  │   │  • 29 Festivals    │   │  • Connection    │
-          │  • 7 Features    │   │  • ±5 day windows  │   │    Pool (5)      │
-          │  • 3-Tier Cold   │   │  • Compound boosts │   │  • 6 Tables      │
-          │    Start Fallback│   │  • Weekend stacking│   │  • Audit Log     │
+          │  Dual-Core ML    │   │  Festival Engine   │   │  MySQL 8.0      │
+          │  • Core A: HGBR  │   │  • 29 Festivals    │   │  • Connection    │
+          │  • Core B: RF    │   │  • ±5 day windows  │   │    Pool (5)      │
+          │  • Surrogate Map │   │  • Compound boosts │   │  • 6 Tables      │
+          │    (UP001-UP002) │   │  • Weekend stacking│   │  • Audit Log     │
           └──────────────────┘   └───────────────────┘   └─────────────────┘
 ```
 
@@ -90,7 +90,7 @@ copy .env.example .env
 
 # 2. Generate training data + setup database
 python scripts/generate_grocery_sales.py
-python backend/setup_database.py
+$env:PYTHONPATH="src"; python src/smartretail/db/migrations/setup_database.py
 
 # 3. Start the server
 .\scripts\start.ps1

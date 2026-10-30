@@ -12,6 +12,13 @@ logger = logging.getLogger(__name__)
 # Model storage for in-memory / CSV models
 _models: dict[str, Any] = {}
 
+# ── Product Tokenizer (Two-Way ID ↔ Name Mapper) ────────────────────────────
+# Encodes user raw product names → clean surrogate IDs for ML training,
+# then decodes back to original names for dashboard display.
+# Zero external API calls. 100% on-premise. O(1) lookup.
+from smartretail.ml.product_tokenizer import ProductTokenizer
+_csv_tokenizer = ProductTokenizer(prefix="UP")  # UP = User Product
+
 # New Detrended HGBR model
 from smartretail.ml.trainer import train as hgbr_train, get_state, get_product_lookup, get_id_to_name_lookup
 from smartretail.ml.predictor import predict as hgbr_predict, get_model_info
@@ -196,9 +203,10 @@ class SalesPredictionDetails(TypedDict):
 def train_model_from_csv(csv_text, product_name):
     """Train a RandomForest model from uploaded CSV text.
     
-    Auto-detects two CSV column formats:
-      Format A (simple): Date, Product, Sales_Qty
-      Format B (full):   Date, Store_ID, Product_ID, Units_Sold, ...
+    Auto-detects column formats and normalizes to: Date, Product, Sales_Qty.
+    Uses ProductTokenizer to encode raw product names into clean surrogate
+    IDs (UP001, UP002, ...) for internal ML processing, then decodes back
+    to original names when returning results to the dashboard.
     """
     try:
         df = pd.read_csv(io.StringIO(csv_text))
@@ -206,28 +214,45 @@ def train_model_from_csv(csv_text, product_name):
         
         # Auto-detect column format and normalize to: Date, Product, Sales_Qty
         if 'Product_ID' in df.columns and 'Units_Sold' in df.columns:
-            # Format B: full sales_data.csv format
             df = df.rename(columns={'Product_ID': 'Product', 'Units_Sold': 'Sales_Qty'})
             logger.info("CSV auto-detected as Format B (Product_ID/Units_Sold)")
         elif 'Product' in df.columns and 'Sales_Qty' in df.columns:
             logger.info("CSV auto-detected as Format A (Product/Sales_Qty)")
         else:
-            return False, (
-                "CSV must contain either (Date, Product, Sales_Qty) or "
-                "(Date, Product_ID, Units_Sold) columns. "
-                f"Found: {', '.join(df.columns.tolist())}"
-            )
+            # Flexible detection for any grocery dataset
+            date_col = next((c for c in df.columns if any(k in c.lower() for k in ['date', 'time', 'day'])), None)
+            prod_col = next((c for c in df.columns if any(k in c.lower() for k in ['product', 'item', 'desc', 'name', 'sku', 'title'])), None)
+            qty_col = next((c for c in df.columns if any(k in c.lower() for k in ['qty', 'quantity', 'units', 'sold', 'sales', 'volume', 'count'])), None)
+            
+            if date_col and prod_col and qty_col:
+                df = df.rename(columns={date_col: 'Date', prod_col: 'Product', qty_col: 'Sales_Qty'})
+                logger.info("CSV auto-detected via flexible matching: Date=%s, Product=%s, Sales_Qty=%s", date_col, prod_col, qty_col)
+            else:
+                return False, (
+                    "CSV must contain Date, Product, and Sales_Qty columns. "
+                    f"Found columns: {', '.join(df.columns.tolist())}"
+                )
         
         if 'Date' not in df.columns:
             return False, "CSV must contain a 'Date' column."
             
-        df['Date'] = pd.to_datetime(df['Date'])
+        df['Date'] = pd.to_datetime(df['Date'], format='mixed', errors='coerce')
+        df = df.dropna(subset=['Date'])
+        df['Sales_Qty'] = pd.to_numeric(df['Sales_Qty'], errors='coerce').fillna(0)
         
         target_products = [product_name]
         if product_name == "ALL":
-            target_products = df['Product'].unique().tolist()
+            target_products = [str(p).strip() for p in df['Product'].dropna().unique().tolist() if str(p).strip()]
             if not target_products:
                 return False, "No products found in CSV."
+            
+            # Clear previous CSV models so fresh dataset does not mix with older ones
+            csv_keys = [k for k, v in _models.items() if v.get("source") == "csv"]
+            for k in csv_keys:
+                del _models[k]
+
+        # ── Step 1: ENCODE — build surrogate ID map for uploaded products ──
+        _csv_tokenizer.encode(target_products)
                 
         total_trained = 0
         trained_names = []
@@ -255,8 +280,10 @@ def train_model_from_csv(csv_text, product_name):
             accuracy = max(0.0, min(100.0, round(r2_score * 100, 1)))
             
             avg = float(cast(Any, y.mean()))
+            surrogate_id = _csv_tokenizer.get_id(p_name) or p_name
             _models[p_name] = {
                 "model": model, "avg": avg, "accuracy": accuracy, "source": "csv",
+                "product_id": surrogate_id,
                 "metrics": {"rmse": round(rmse, 4), "mae": round(mae, 4)},
             }
             total_trained += 1
@@ -266,7 +293,10 @@ def train_model_from_csv(csv_text, product_name):
             return False, "Not enough data to train any model."
             
         if product_name == "ALL":
-            return True, f"Trained {total_trained} models from CSV: {', '.join(trained_names)}"
+            summary = f"Trained {total_trained} models from CSV: {', '.join(trained_names[:10])}"
+            if len(trained_names) > 10:
+                summary += f" and {len(trained_names) - 10} more"
+            return True, summary
         else:
             info = _models.get(product_name, {})
             prod_data = df[df['Product'] == product_name]
@@ -313,19 +343,60 @@ def predict_sales(product_name: str, target_date: datetime):
     return adjusted, details
 
 def predict_range(product_name, start_date, end_date):
-    """Date-range prediction using HGBR or custom CSV RandomForest model."""
+    """Date-range prediction using HGBR or custom CSV RandomForest model.
+    
+    When product_name is 'ALL':
+      - If CSV models exist in _models, predict across ALL uploaded products
+        and decode surrogate IDs back to original names via _csv_tokenizer.
+      - Otherwise, fall through to the pre-trained HGBR model.
+    """
+    # ── ALL products from uploaded CSV ──────────────────────────────────
+    csv_products = [k for k, v in _models.items() if v.get('source') == 'csv']
+    if product_name == "ALL" and csv_products:
+        results_by_date: dict[str, float] = {}
+        daily_breakdowns: dict[str, dict[str, float]] = {}
+        breakdown: dict[str, float] = {}
+        accuracy_by_product: dict[str, float] = {}
+        
+        for p_name in csv_products:
+            info = _models[p_name]
+            model = info['model']
+            acc = info.get('accuracy', 85.0)
+            product_total = 0.0
+            curr = start_date
+            while curr <= end_date:
+                X = pd.DataFrame(_build_inference_features(curr), columns=FEATURE_COLUMNS)
+                base_pred = float(model.predict(X)[0])
+                mult, boosts = get_demand_multiplier(curr)
+                adj = round(max(0.0, base_pred * mult), 1)
+                d_str = curr.strftime('%Y-%m-%d')
+                results_by_date[d_str] = results_by_date.get(d_str, 0.0) + adj
+                if d_str not in daily_breakdowns:
+                    daily_breakdowns[d_str] = {}
+                # ── Step 3: DECODE — user's real product name in the daily breakdown ──
+                daily_breakdowns[d_str][p_name] = round(
+                    daily_breakdowns[d_str].get(p_name, 0.0) + adj, 1)
+                product_total += adj
+                curr += timedelta(days=1)
+            breakdown[p_name] = round(product_total, 1)
+            accuracy_by_product[p_name] = acc
+        
+        results = [{'date': d, 'day': pd.Timestamp(d).strftime('%A'),
+                    'predicted_qty': round(v, 1), 'base_qty': round(v, 1),
+                    'multiplier': 1.0, 'boosts': [],
+                    'daily_breakdown': daily_breakdowns.get(d, {})}
+                   for d, v in sorted(results_by_date.items())]
+        avg_acc = round(sum(accuracy_by_product.values()) / len(accuracy_by_product), 1) if accuracy_by_product else 85.0
+        return results, breakdown, avg_acc, accuracy_by_product
+    
+    # ── Single product from uploaded CSV ────────────────────────────────
     if product_name in _models:
         info = _models[product_name]
         model = info["model"]
         curr = start_date
         results = []
         while curr <= end_date:
-            X = pd.DataFrame([{
-                'Year': curr.year,
-                'Month': curr.month,
-                'Day': curr.day,
-                'DayOfWeek': curr.weekday()
-            }])
+            X = pd.DataFrame(_build_inference_features(curr), columns=FEATURE_COLUMNS)
             base_pred = float(model.predict(X)[0])
             mult, boosts = get_demand_multiplier(curr)
             adj = round(max(0.0, base_pred * mult), 1)
@@ -354,8 +425,8 @@ def predict_range(product_name, start_date, end_date):
         pids  = list({k[1] for k in state.get("trend_params", {}).keys()}) if state else []
         if not pids:
             return [], {}, None, {}
-        results_by_date: dict[str, float] = {}
-        daily_breakdowns: dict[str, dict[str, float]] = {}
+        results_by_date = {}
+        daily_breakdowns = {}
         breakdown_raw: dict[str, float] = {}
         for sid in store_ids:
             for p in pids:
@@ -406,6 +477,7 @@ def predict_range(product_name, start_date, end_date):
         accuracy = round(max(0, 100 - mae * 3), 1)
         return results, breakdown, accuracy, {disp_name: accuracy}
 
+
 @require_auth()
 def handle_train(request):
     """Train model on custom CSV data or Detrended HGBR dataset."""
@@ -423,10 +495,15 @@ def handle_train(request):
             success, msg = train_model_from_csv(csv_data, product)
             if not success:
                 return json_response(request, {"error": msg}, 400)
+            trained_products = _csv_tokenizer.get_all_names()
+            if not trained_products:
+                trained_products = [k for k, v in _models.items() if v.get("source") == "csv"]
             return json_response(request, {
                 "success": True,
                 "message": msg,
-                "source": "uploaded_csv"
+                "source": "uploaded_csv",
+                "trained_products": trained_products,
+                "tokenizer_map": _csv_tokenizer.get_name_to_id_map(),
             })
 
         # Full HGBR training on server-side sales_data.csv
@@ -544,3 +621,15 @@ def handle_predict(request):
         })
     except Exception as e:
         return json_response(request, {"error": str(e)}, 500)
+
+@require_auth()
+def handle_get_trained_products(request):
+    """Return list of products currently trained in memory (from CSV)."""
+    try:
+        names = _csv_tokenizer.get_all_names()
+        mapping = _csv_tokenizer.get_name_to_id_map()
+        items = [{"name": n, "product_id": mapping.get(n, n)} for n in names]
+        return json_response(request, {"products": items, "tokenizer_map": mapping})
+    except Exception as e:
+        return json_response(request, {"error": str(e)}, 500)
+

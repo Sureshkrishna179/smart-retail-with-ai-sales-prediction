@@ -10,6 +10,10 @@ ml_models.*
 *.pkl
 *.sig
 logs/
+*.log
+files/output/*.log
+count_*.py
+*.tmp
 *.py[cod]
 *$py.class
 .venv/

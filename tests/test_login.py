@@ -5,6 +5,7 @@ import socket
 import threading
 import time
 from http.server import HTTPServer
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 import pytest
@@ -37,8 +38,11 @@ def _post(url, body):
         headers={"Content-Type": "application/json", "Origin": "http://localhost:8080"},
         method="POST",
     )
-    with urlopen(req, timeout=5) as resp:
-        return resp.status, json.loads(resp.read().decode())
+    try:
+        with urlopen(req, timeout=5) as resp:
+            return resp.status, json.loads(resp.read().decode())
+    except HTTPError as e:
+        return e.code, json.loads(e.read().decode())
 
 
 @pytest.mark.integration
