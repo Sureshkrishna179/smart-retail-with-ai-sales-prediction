@@ -11,6 +11,7 @@ load_dotenv()
 @dataclass(frozen=True)
 class Settings:
     db_host:     str = os.getenv("DB_HOST", "localhost")
+    db_port:     int = int(os.getenv("DB_PORT", "3306"))
     db_user:     str = os.getenv("DB_USER", "retail_app")
     db_password: str = os.getenv("DB_PASSWORD", "")
     db_name:     str = os.getenv("DB_NAME", "retail_sales_db")

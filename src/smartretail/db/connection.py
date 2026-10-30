@@ -7,6 +7,7 @@ logger = logging.getLogger(__name__)
 
 DB_CONFIG = {
     "host": settings.db_host,
+    "port": settings.db_port,
     "user": settings.db_user,
     "password": settings.db_password,
     "database": settings.db_name,
