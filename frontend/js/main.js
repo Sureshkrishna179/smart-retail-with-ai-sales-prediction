@@ -268,7 +268,17 @@ async function api(path, opts = {}) {
     let data = {};
     const text = await r.text();
     if (text) {
-      try { data = JSON.parse(text); } catch (_) { data = { error: text.slice(0, 200) }; }
+      try {
+        data = JSON.parse(text);
+      } catch (_) {
+        if (r.status === 502 || text.includes('<title>502') || text.includes('502 Bad Gateway')) {
+          data = { error: 'Service is waking up (502 Gateway). Please refresh in a moment.' };
+        } else if (text.trim().startsWith('<')) {
+          data = { error: 'Server temporarily unavailable. Please retry.' };
+        } else {
+          data = { error: text.slice(0, 200) };
+        }
+      }
     }
     if (r.status === 429) {
       toast(data.error || 'Too many requests. Please slow down.', 'warning');
