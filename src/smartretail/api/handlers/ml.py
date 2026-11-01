@@ -84,6 +84,11 @@ FEATURE_COLUMNS = [
     "IsWeekend", "IsPayDay", "DaysToFestival",
 ]
 
+# ── Core B extended feature pipeline (7 calendar + 3 historical demand signals) ──
+CORE_B_FEATURE_COLUMNS = FEATURE_COLUMNS + [
+    "lag_1", "rolling_3_mean", "rolling_7_mean",
+]
+
 
 def _days_to_nearest_festival(dt: datetime) -> int:
     """Return the number of days to the nearest festival date."""
@@ -122,10 +127,27 @@ def _build_inference_features(dt: datetime) -> np.ndarray:
     return np.array([row], dtype=float)
 
 
+def _build_core_b_inference_row(dt: datetime, lag_1: float, rolling_3_mean: float, rolling_7_mean: float) -> pd.DataFrame:
+    """Build a (1, 10) DataFrame for Core B inference with current calendar and rolling lag features."""
+    row = {
+        "Year": dt.year,
+        "Month": dt.month,
+        "Day": dt.day,
+        "DayOfWeek": dt.weekday(),
+        "IsWeekend": 1 if dt.weekday() >= 5 else 0,
+        "IsPayDay": 1 if dt.day in (1, 15, 28, 29, 30, 31) else 0,
+        "DaysToFestival": _days_to_nearest_festival(dt),
+        "lag_1": float(lag_1),
+        "rolling_3_mean": float(rolling_3_mean),
+        "rolling_7_mean": float(rolling_7_mean),
+    }
+    return pd.DataFrame([row], columns=CORE_B_FEATURE_COLUMNS)
+
+
 def _build_feature_df(prod_data: pd.DataFrame) -> pd.DataFrame:
-    """Build a 7-column feature DataFrame for training."""
+    """Build a 10-column feature DataFrame for Core B training (calendar + lag/rolling demand)."""
     dt_accessor = cast(Any, prod_data['Date'].dt)
-    return pd.DataFrame({
+    base_dict = {
         'Year':           dt_accessor.year,
         'Month':          dt_accessor.month,
         'Day':            dt_accessor.day,
@@ -135,7 +157,18 @@ def _build_feature_df(prod_data: pd.DataFrame) -> pd.DataFrame:
                               lambda d: 1 if d.day in (1, 15, 28, 29, 30, 31) else 0),
         'DaysToFestival': prod_data['Date'].apply(
                               lambda d: _days_to_nearest_festival(d)),
-    })
+    }
+    if 'Sales_Qty' in prod_data.columns and len(prod_data) > 0:
+        s = prod_data['Sales_Qty'].astype(float)
+        mean_val = float(s.mean())
+        base_dict['lag_1'] = s.shift(1).bfill().fillna(mean_val)
+        base_dict['rolling_3_mean'] = s.shift(1).rolling(window=3, min_periods=1).mean().bfill().fillna(mean_val)
+        base_dict['rolling_7_mean'] = s.shift(1).rolling(window=7, min_periods=1).mean().bfill().fillna(mean_val)
+    else:
+        base_dict['lag_1'] = 0.0
+        base_dict['rolling_3_mean'] = 0.0
+        base_dict['rolling_7_mean'] = 0.0
+    return pd.DataFrame(base_dict, columns=CORE_B_FEATURE_COLUMNS)
 
 
 def build_metrics_by_product(
@@ -258,18 +291,32 @@ def train_model_from_csv(csv_text, product_name):
         trained_names = []
         for p_name in target_products:
             prod_data = df[df['Product'] == p_name].copy()
+            if len(prod_data) == 0:
+                continue
+
+            # 1. Daily Aggregation: group by Date and sum Sales_Qty to consolidate multiple daily transactions
+            prod_data = prod_data.groupby('Date', as_index=False)['Sales_Qty'].sum()
+            prod_data = prod_data.sort_values(by='Date').reset_index(drop=True)
+
             if len(prod_data) < 5:
                 if product_name != "ALL":
                     return False, f"Not enough data for '{p_name}'. Need 5 records."
                 continue
                 
             assert isinstance(prod_data, pd.DataFrame)
-            prod_data = prod_data.sort_values(by='Date')
 
+            # 2. Add Lag & Rolling Features
             X = _build_feature_df(prod_data)
             y = prod_data['Sales_Qty'].astype(float)
 
-            model = RandomForestRegressor(n_estimators=100, random_state=42)
+            # 3. Prevent Per-SKU Overfitting: constrained hyperparameters
+            model = RandomForestRegressor(
+                n_estimators=100,
+                max_depth=10,
+                min_samples_leaf=2,
+                random_state=42,
+                n_jobs=-1
+            )
             model.fit(X, y)
 
             y_pred = model.predict(X)
@@ -281,10 +328,13 @@ def train_model_from_csv(csv_text, product_name):
             
             avg = float(cast(Any, y.mean()))
             surrogate_id = _csv_tokenizer.get_id(p_name) or p_name
+            recent_sales = list(prod_data['Sales_Qty'].astype(float).tail(14))
             _models[p_name] = {
                 "model": model, "avg": avg, "accuracy": accuracy, "source": "csv",
                 "product_id": surrogate_id,
                 "metrics": {"rmse": round(rmse, 4), "mae": round(mae, 4)},
+                "recent_sales": recent_sales,
+                "rec_count": len(prod_data),
             }
             total_trained += 1
             trained_names.append(p_name)
@@ -322,7 +372,27 @@ def average_accuracy(accuracy_by_product):
     return round(sum(values) / len(values), 1) if values else None
 
 def predict_sales(product_name: str, target_date: datetime):
-    """Predict for a product_name on a given date using the HGBR model."""
+    """Predict for a product_name on a given date using the HGBR model or Core B CSV model."""
+    if product_name in _models and _models[product_name].get("source") == "csv":
+        info = _models[product_name]
+        model = info["model"]
+        avg = info.get("avg", 0.0)
+        history = list(info.get("recent_sales", [avg]))
+        lag_1 = history[-1] if history else avg
+        r3 = float(np.mean(history[-3:])) if history else avg
+        r7 = float(np.mean(history[-7:])) if history else avg
+        X = _build_core_b_inference_row(target_date, lag_1, r3, r7)
+        base_pred = float(model.predict(X)[0])
+        mult, boosts = get_demand_multiplier(target_date)
+        adjusted = round(max(0.0, base_pred * mult), 1)
+        details: SalesPredictionDetails = {
+            "base": round(base_pred, 1),
+            "multiplier": mult,
+            "boosts": boosts,
+            "adjusted": adjusted,
+        }
+        return adjusted, details
+
     pid = _resolve_product_id(product_name)
     result = hgbr_predict(
         store_id="ST01",
@@ -362,11 +432,18 @@ def predict_range(product_name, start_date, end_date):
             info = _models[p_name]
             model = info['model']
             acc = info.get('accuracy', 85.0)
+            avg = info.get('avg', 0.0)
+            history = list(info.get('recent_sales', [avg]))
             product_total = 0.0
             curr = start_date
             while curr <= end_date:
-                X = pd.DataFrame(_build_inference_features(curr), columns=FEATURE_COLUMNS)
+                lag_1 = history[-1] if history else avg
+                r3 = float(np.mean(history[-3:])) if history else avg
+                r7 = float(np.mean(history[-7:])) if history else avg
+                X = _build_core_b_inference_row(curr, lag_1, r3, r7)
                 base_pred = float(model.predict(X)[0])
+                history.append(base_pred)  # autoregressive update
+                
                 mult, boosts = get_demand_multiplier(curr)
                 adj = round(max(0.0, base_pred * mult), 1)
                 d_str = curr.strftime('%Y-%m-%d')
@@ -393,11 +470,18 @@ def predict_range(product_name, start_date, end_date):
     if product_name in _models:
         info = _models[product_name]
         model = info["model"]
+        avg = info.get('avg', 0.0)
+        history = list(info.get('recent_sales', [avg]))
         curr = start_date
         results = []
         while curr <= end_date:
-            X = pd.DataFrame(_build_inference_features(curr), columns=FEATURE_COLUMNS)
+            lag_1 = history[-1] if history else avg
+            r3 = float(np.mean(history[-3:])) if history else avg
+            r7 = float(np.mean(history[-7:])) if history else avg
+            X = _build_core_b_inference_row(curr, lag_1, r3, r7)
             base_pred = float(model.predict(X)[0])
+            history.append(base_pred)
+            
             mult, boosts = get_demand_multiplier(curr)
             adj = round(max(0.0, base_pred * mult), 1)
             d_str = curr.strftime("%Y-%m-%d")
