@@ -835,7 +835,7 @@ table, th, td, .stat-val, .kpi-card .value, .grand-total, .receipt-line, .pred-u
   background: var(--bg-card);
 }
 .daily-table-container {
-  max-height: 320px;
+  max-height: 650px;
   overflow-y: auto;
   scrollbar-width: thin;
   position: relative;

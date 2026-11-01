@@ -82,8 +82,8 @@ def validate_predict(body):
         try:
             s = datetime.strptime(start, "%Y-%m-%d")
             e = datetime.strptime(end, "%Y-%m-%d")
-            if (e - s).days > 365:
-                return False, "Date range cannot exceed 365 days"
+            if (e - s).days > 730:
+                return False, "Date range cannot exceed 730 days"
             if e < s:
                 return False, "end_date cannot be before start_date"
         except ValueError:

@@ -335,13 +335,8 @@ def train_model_from_csv(csv_text, product_name):
             mae  = float(mean_absolute_error(y_test, y_pred_test))
             r2_score = float(val_model.score(X_test, y_test))
             sum_y_test = float(y_test.sum())
-            wape = float(np.sum(np.abs(y_test - y_pred_test)) / sum_y_test) if sum_y_test > 0 else 0.0
-
-            if r2_score > 0:
-                accuracy = max(0.0, min(100.0, round(r2_score * 100, 1)))
-            else:
-                y_mean = float(y_test.mean()) if sum_y_test > 0 else float(y.mean())
-                accuracy = max(0.0, min(100.0, round((1.0 - min(1.0, mae / max(1.0, y_mean))) * 100, 1)))
+            wape = (float(np.sum(np.abs(y_test - y_pred_test))) / max(sum_y_test, 1.0)) * 100.0
+            accuracy = round(max(0.0, min(100.0, 100.0 - wape)), 1)
 
             # Refit final production model on 100% of product's aggregated rows
             final_model = RandomForestRegressor(
@@ -376,7 +371,7 @@ def train_model_from_csv(csv_text, product_name):
                         "rmse": round(rmse, 4),
                         "mae": round(mae, 4),
                         "r2": round(r2_score, 4),
-                        "wape": round(wape, 4)
+                        "wape": round(wape, 2)
                     },
                     "recent_history": recent_history,
                     "recent_sales": recent_sales,
@@ -391,9 +386,23 @@ def train_model_from_csv(csv_text, product_name):
             
         if total_trained == 0:
             return False, "Not enough data to train any model."
-            
-        _csv_meta["total_rows"] = int(len(df))
-        _csv_meta["sku_count"] = int(total_trained)
+
+        csv_models = [v for k, v in _models.items() if v.get("source") == "csv"]
+        if csv_models:
+            avg_mae = round(float(np.mean([m["metrics"]["mae"] for m in csv_models])), 3)
+            avg_rmse = round(float(np.mean([m["metrics"]["rmse"] for m in csv_models])), 3)
+            avg_wape = round(float(np.mean([m["metrics"]["wape"] for m in csv_models])), 2)
+            avg_acc = round(float(np.mean([m.get("accuracy", 85.0) for m in csv_models])), 1)
+            csv_metrics = {"MAE": avg_mae, "RMSE": avg_rmse, "WAPE": avg_wape}
+        else:
+            avg_acc = 85.0
+            csv_metrics = {"MAE": 0.0, "RMSE": 0.0, "WAPE": 0.0}
+
+        with _models_lock:
+            _csv_meta["total_rows"] = int(len(df))
+            _csv_meta["sku_count"] = int(total_trained)
+            _csv_meta["metrics"] = csv_metrics
+            _csv_meta["accuracy"] = avg_acc
             
         if product_name == "ALL":
             summary = f"Trained {total_trained} models from CSV: {', '.join(trained_names[:10])}"
@@ -504,17 +513,19 @@ def predict_sales(product_name: str, target_date: datetime):
     }
     return adjusted, details
 
-def predict_range(product_name, start_date, end_date):
+def predict_range(product_name, start_date, end_date, mode="auto"):
     """Date-range prediction using HGBR or custom CSV RandomForest model.
     
-    When product_name is 'ALL':
+    When mode is 'core_a':
+      - Bypasses any CSV models and routes strictly to Core A (HGBR).
+    When product_name is 'ALL' and mode != 'core_a':
       - If CSV models exist in _models, predict across ALL uploaded products
         and decode surrogate IDs back to original names via _csv_tokenizer.
       - Otherwise, fall through to the pre-trained HGBR model.
     """
     # ── ALL products from uploaded CSV ──────────────────────────────────
     csv_products = [k for k, v in _models.items() if v.get('source') == 'csv']
-    if product_name == "ALL" and csv_products:
+    if mode != "core_a" and product_name == "ALL" and csv_products:
         results_by_date: dict[str, int] = {}
         daily_breakdowns: dict[str, dict[str, int]] = {}
         breakdown: dict[str, int] = {}
@@ -560,7 +571,7 @@ def predict_range(product_name, start_date, end_date):
         return results, breakdown, avg_acc, accuracy_by_product
     
     # ── Single product from uploaded CSV ────────────────────────────────
-    if product_name in _models and _models[product_name].get("source") == "csv":
+    if mode != "core_a" and product_name in _models and _models[product_name].get("source") == "csv":
         info = _models[product_name]
         model = info["model"]
         avg = info.get('avg', 0.0)
@@ -688,9 +699,22 @@ def handle_train(request):
                 "tokenizer_map":    mapping,
                 "sku_count":        len(names),
                 "csv_row_count":    _csv_meta.get("total_rows", 0),
+                "accuracy":         _csv_meta.get("accuracy", 85.0),
+                "metrics":          _csv_meta.get("metrics", {"MAE": 0, "RMSE": 0, "WAPE": 0}),
             })
 
         # Canonical sales_data.csv — Detrended HGBR (Core A)
+        # Purge Core B state immediately
+        with _models_lock:
+            csv_keys = [k for k, v in _models.items() if v.get("source") == "csv"]
+            for k in csv_keys:
+                del _models[k]
+            _csv_tokenizer.clear()
+            _csv_meta["total_rows"] = 0
+            _csv_meta["sku_count"] = 0
+            _csv_meta.pop("metrics", None)
+            _csv_meta.pop("accuracy", None)
+
         global _product_lookup, _id_to_name_lookup
         result = hgbr_train(test_size=0.2)
         metrics = result["metrics"]
@@ -720,6 +744,29 @@ def handle_train(request):
 
 
 @require_auth()
+def handle_reset_core_b(request):
+    """Purge Core B state and restore Core A native grocery models."""
+    try:
+        with _models_lock:
+            csv_keys = [k for k, v in _models.items() if v.get("source") == "csv"]
+            for k in csv_keys:
+                del _models[k]
+            _csv_tokenizer.clear()
+            _csv_meta["total_rows"] = 0
+            _csv_meta["sku_count"] = 0
+            _csv_meta.pop("metrics", None)
+            _csv_meta.pop("accuracy", None)
+        return json_response(request, {
+            "success": True, 
+            "message": "Core B state cleared. Restored native Core A grocery database.",
+            "source": "database",
+            "is_core_b": False
+        })
+    except Exception as e:
+        logger.error("Reset Core B error: %s", e, exc_info=True)
+        return json_response(request, {"error": "Internal server error"}, 500)
+
+@require_auth()
 def handle_model_info(request):
     """Return model status — whether it's loaded, its metrics, etc."""
     try:
@@ -729,6 +776,10 @@ def handle_model_info(request):
             info["core_b_active"] = True
             info["core_b_skus"] = len(csv_products)
             info["core_b_rows"] = _csv_meta.get("total_rows", 0)
+            if "metrics" in _csv_meta:
+                info["metrics"] = _csv_meta["metrics"]
+            if "accuracy" in _csv_meta:
+                info["accuracy"] = _csv_meta["accuracy"]
         return json_response(request, info)
     except Exception as e:
         logger.error("Unhandled error: %s", e, exc_info=True)
@@ -745,23 +796,28 @@ def handle_predict(request):
         product = body.get("product", "")
         start   = body.get("start_date", "")
         end     = body.get("end_date", start)
+        mode    = body.get("mode", "auto")
         
         s = datetime.strptime(start, "%Y-%m-%d")
         e = datetime.strptime(end, "%Y-%m-%d")
         
-        results, breakdown, accuracy, accuracy_by_product = predict_range(product, s, e)
+        results, breakdown, accuracy, accuracy_by_product = predict_range(product, s, e, mode=mode)
         if not results:
             return json_response(request, {"error": "No predictions. Train the model first."}, 400)
             
         total_predicted = int(round(sum(r["predicted_qty"] for r in results)))
         
-        csv_products = [k for k, v in _models.items() if v.get('source') == 'csv']
-        is_core_b = (product == "ALL" and len(csv_products) > 0) or (product in _models and _models[product].get("source") == "csv")
-
-        if product == "ALL":
-            source = "database/csv (multiple)" if is_core_b else "database"
+        if mode == "core_a":
+            is_core_b = False
+            source = "database"
+            csv_products = []
         else:
-            source = _models.get(product, {}).get("source", "database")
+            csv_products = [k for k, v in _models.items() if v.get('source') == 'csv']
+            is_core_b = (product == "ALL" and len(csv_products) > 0) or (product in _models and _models[product].get("source") == "csv")
+            if product == "ALL":
+                source = "database/csv (multiple)" if is_core_b else "database"
+            else:
+                source = _models.get(product, {}).get("source", "database")
             
         if is_core_b:
             if product == "ALL":
@@ -810,7 +866,7 @@ def handle_predict(request):
                 })
                 curr_hist += timedelta(days=1)
             
-        return json_response(request, {
+        resp = {
             "predictions": results, 
             "historical": historical_data,
             "breakdown": breakdown,
@@ -824,7 +880,10 @@ def handle_predict(request):
             "n_series": len(csv_products) if is_core_b else None,
             "csv_row_count": _csv_meta.get("total_rows", 0) if is_core_b else None,
             "total_rows": _csv_meta.get("total_rows", 0) if is_core_b else None,
-        })
+        }
+        if is_core_b and "metrics" in _csv_meta:
+            resp["metrics"] = _csv_meta["metrics"]
+        return json_response(request, resp)
     except Exception as e:
         logger.error("Unhandled error: %s", e, exc_info=True)
         return json_response(request, {"error": "Internal server error"}, 500)

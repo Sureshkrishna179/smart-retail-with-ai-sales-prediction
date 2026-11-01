@@ -921,6 +921,8 @@ function handleCSV(input) {
     csvData = '__use_server_file__';
     document.getElementById('csvStatus').innerHTML =
       `<span class="tag tag-green">✅ ${escapeHtml(file.name)} (${(file.size/1024/1024).toFixed(1)} MB) — In-Memory Stream</span>`;
+    const resetBtn1 = document.getElementById('btnResetCoreA');
+    if (resetBtn1) resetBtn1.style.display = 'inline-flex';
     const analysis = document.getElementById('dataAnalysis');
     const analysisStats = document.getElementById('analysisStats');
     if (analysis && analysisStats) {
@@ -938,6 +940,8 @@ function handleCSV(input) {
     csvData = e.target.result;
     document.getElementById('csvStatus').innerHTML =
       `<span class="tag tag-green">✅ ${escapeHtml(file.name)} (${(file.size/1024).toFixed(1)} KB) — In-Memory Stream</span>`;
+    const resetBtn2 = document.getElementById('btnResetCoreA');
+    if (resetBtn2) resetBtn2.style.display = 'inline-flex';
     const stats = parseCSVStats(csvData);
     if (stats) {
       window._lastUploadedRowCount = stats.rows;
@@ -1101,9 +1105,18 @@ async function runPrediction(forceDB = false) {
   if (!product || !start) return toast('Select product and date', 'error');
   if (!forceDB && !csvData) return toast('Upload a CSV or click "Retrain from File"', 'error');
   
+  const isCoreA = forceDB || csvData === '__use_server_file__';
+  if (isCoreA) {
+    csvData = "";
+    window._lastUploadedRowCount = null;
+    window._lastUploadedSkuCount = null;
+    const resetBtn = document.getElementById('btnResetCoreA');
+    if (resetBtn) resetBtn.style.display = 'none';
+  }
+
   showTrainingSpinner();
   
-  const trainBody = forceDB 
+  const trainBody = isCoreA 
     ? { product } 
     : { csv_data: csvData, product };
   const train = await api('/api/train', { method: 'POST', body: trainBody });
@@ -1121,7 +1134,13 @@ async function runPrediction(forceDB = false) {
   toast(train.message);
   updatePredictionAccuracyStats(train, train.message);
 
-  if (train.trained_products && train.trained_products.length > 0) {
+  if (isCoreA) {
+    const sel = document.getElementById('predProduct');
+    if (sel && window._defaultCsvProductOptions) {
+      sel.innerHTML = '<option value="ALL" style="font-weight:bold;color:var(--accent-primary)">🌟 All Products</option>' + window._defaultCsvProductOptions;
+      sel.value = product;
+    }
+  } else if (train.trained_products && train.trained_products.length > 0) {
     if (!window._csvProductMap) window._csvProductMap = {};
     if (train.tokenizer_map) {
       Object.entries(train.tokenizer_map).forEach(([realName, surrId]) => {
@@ -1134,7 +1153,10 @@ async function runPrediction(forceDB = false) {
     updateProductDropdownWithCSV(train.trained_products, train.tokenizer_map);
   }
   
-  const pred = await api('/api/predict', { method: 'POST', body: { product, start_date: start, end_date: end } });
+  const pred = await api('/api/predict', { 
+    method: 'POST', 
+    body: { product, start_date: start, end_date: end, mode: isCoreA ? 'core_a' : 'auto' } 
+  });
   if (pred.error) return toast(pred.error, 'error');
   renderPredictions(pred, train.message);
 }
@@ -1155,6 +1177,15 @@ async function quickPredict() {
   }
   
   if (!product || !start) return toast('Select product and date', 'error');
+
+  // Purge any staged Core B data
+  csvData = "";
+  window._lastUploadedRowCount = null;
+  window._lastUploadedSkuCount = null;
+  const resetBtn = document.getElementById('btnResetCoreA');
+  if (resetBtn) resetBtn.style.display = 'none';
+  const csvFileEl = document.getElementById('csvFile');
+  if (csvFileEl) csvFileEl.value = '';
   
   const modelInfo = await api('/api/model-info');
   if (modelInfo.status !== 'loaded') {
@@ -1164,15 +1195,66 @@ async function quickPredict() {
   
   document.getElementById('predResults').innerHTML = '<p style="color:var(--text-dim);text-align:center;padding:20px">⚡ Forecasting via Core A HGBR...</p>';
   
-  const pred = await api('/api/predict', { method: 'POST', body: { product, start_date: start, end_date: end } });
+  const pred = await api('/api/predict', { 
+    method: 'POST', 
+    body: { product, start_date: start, end_date: end, mode: 'core_a' } 
+  });
   if (pred.error) {
     document.getElementById('predResults').innerHTML = '<p class="empty-msg" style="padding:40px;text-align:center">Prediction failed. Try training first.</p>';
     return toast(pred.error, 'error');
   }
   modelsReady = true;
   document.getElementById('trainSource').textContent = '⚡ Quick Predict using pre-trained Core A (Detrended HGBR-v2)';
+  
+  // Restore dropdown to 500-series Core A grocery products
+  const sel = document.getElementById('predProduct');
+  if (sel && window._defaultCsvProductOptions && sel.innerHTML.includes('In-Memory Dataset SKUs')) {
+    sel.innerHTML = '<option value="ALL" style="font-weight:bold;color:var(--accent-primary)">🌟 All Products</option>' + window._defaultCsvProductOptions;
+    sel.value = product;
+  }
+  
   renderPredictions(pred, 'Pre-trained Core A');
 }
+
+async function resetToCoreA() {
+  csvData = "";
+  window._lastUploadedRowCount = null;
+  window._lastUploadedSkuCount = null;
+  window._csvProductMap = {};
+  
+  const csvFileEl = document.getElementById('csvFile');
+  if (csvFileEl) csvFileEl.value = '';
+  
+  const resetBtn = document.getElementById('btnResetCoreA');
+  if (resetBtn) resetBtn.style.display = 'none';
+  
+  const csvStatus = document.getElementById('csvStatus');
+  if (csvStatus) {
+    csvStatus.innerHTML = '<span class="tag tag-green">✅ Core A: Native 500-Series Grocery Database Active</span>';
+  }
+  
+  const analysis = document.getElementById('dataAnalysis');
+  if (analysis) analysis.style.display = 'none';
+  
+  await api('/api/reset-core-b', { method: 'POST' });
+  
+  const sel = document.getElementById('predProduct');
+  if (sel && window._defaultCsvProductOptions) {
+    sel.innerHTML = '<option value="ALL" style="font-weight:bold;color:var(--accent-primary)">🌟 All Products</option>' + window._defaultCsvProductOptions;
+    sel.value = 'ALL';
+  }
+  
+  updatePredictionAccuracyStats({
+    source: 'sales_data.csv (detrended-hgbr-v2)',
+    is_core_b: false,
+    n_series: 500,
+    accuracy: 87.6,
+    metrics: { MAE: 3.539, RMSE: 5.54, WAPE: 0.124, improvement_pct: 32.0 }
+  }, 'Reset to Core A');
+  
+  toast('Reset to Core A (Native Grocery DB)');
+}
+window.resetToCoreA = resetToCoreA;
 
 function getDisplayName(rawName) {
   if (!rawName) return '';
@@ -1240,7 +1322,13 @@ function updatePredictionAccuracyStats(data, trainMessage) {
 
   if (accSub) {
     if (data.metrics && data.metrics.MAE != null) {
-      accSub.textContent = `MAE: ${data.metrics.MAE} units • RMSE: ${data.metrics.RMSE || '5.54'}`;
+      let wapeDisplay = '';
+      if (data.metrics.WAPE != null) {
+        let w = typeof data.metrics.WAPE === 'string' ? parseFloat(data.metrics.WAPE.replace('%', '')) : data.metrics.WAPE;
+        if (w <= 1.0 && w > 0) w = w * 100;
+        wapeDisplay = ` • WAPE: ${w.toFixed(1)}%`;
+      }
+      accSub.textContent = `MAE: ${data.metrics.MAE} units • RMSE: ${data.metrics.RMSE || '5.54'}${wapeDisplay}`;
     } else {
       accSub.textContent = 'MAE: 3.539 units • RMSE: 5.54 • WAPE: 12.4%';
     }
@@ -1349,7 +1437,10 @@ function renderPredictions(data, trainMessage) {
     `<div style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap">
        <span class="tag tag-purple">Total: ${fmt(data.total_predicted)} units</span>${srcLabel}${accTag}
      </div>
-     <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px">💡 Tip: Click on any date row to inspect SKU level event analysis.</div>
+     <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--text-dim);margin-bottom:8px">
+       <span>💡 Tip: Click on any date row to inspect SKU level event analysis.</span>
+       <span class="tag tag-blue" style="font-size:11px;">Showing all ${data.predictions.length} forecast days — scroll for full range</span>
+     </div>
      <div class="table-responsive daily-table-container">
        <table>
          <thead><tr><th>Date</th><th>Day</th><th>Base</th><th>Adjusted</th><th>Boosts</th></tr></thead>
