@@ -11,7 +11,7 @@ function escapeHtml(str) {
 
 function fmt(num) {
   if (num === null || num === undefined || isNaN(num)) return '0';
-  return Number(num).toLocaleString('en-IN', { maximumFractionDigits: 2 });
+  return Math.round(Number(num)).toLocaleString('en-IN');
 }
 
 // Global Error Visualizer for Debugging
@@ -944,7 +944,7 @@ function handleCSV(input) {
       window._lastUploadedSkuCount = stats.products;
       const recEl = document.getElementById('recordsLoaded');
       const recSub = document.getElementById('recordsLoadedSub');
-      const statusEl = document.getElementById('modelStatusBadge');
+      const statusEl = document.getElementById('coreAStatus') || document.getElementById('modelStatusBadge');
       const coreEl = document.getElementById('activeCoreName');
       const coreSub = document.getElementById('activeCoreSub');
       if (coreEl && coreSub) {
@@ -1001,7 +1001,7 @@ function initPredictionDates() {
 async function loadPredictions() {
   initPredictionDates();
   const modelInfo = await api('/api/model-info');
-  const statusEl = document.getElementById('modelStatusBadge');
+  const statusEl = document.getElementById('coreAStatus') || document.getElementById('modelStatusBadge');
   const coreEl = document.getElementById('activeCoreName');
   const coreSub = document.getElementById('activeCoreSub');
   const recEl = document.getElementById('recordsLoaded');
@@ -1201,7 +1201,7 @@ function updatePredictionAccuracyStats(data, trainMessage) {
   const impSub = document.getElementById('improvementSub');
   const recEl = document.getElementById('recordsLoaded');
   const recSub = document.getElementById('recordsLoadedSub');
-  const statusEl = document.getElementById('modelStatusBadge');
+  const statusEl = document.getElementById('coreAStatus') || document.getElementById('modelStatusBadge');
   const tokenPreview = document.getElementById('aclTokenPreview');
 
   const isCustomUpload = Boolean(csvData && csvData !== '__use_server_file__')
@@ -1566,7 +1566,13 @@ async function loadUsers() {
   const usersPanel = document.getElementById('usersPanel');
   if (!usersPanel) return;
   if (res.error) {
-    usersPanel.innerHTML = `<p style="color:var(--accent-danger)">${escapeHtml(res.error)}</p>`;
+    const isWaking = res.error.includes('waking up') || res.error.includes('502') || res.error.includes('unavailable') || res.error.includes('Failed to fetch');
+    const msg = isWaking ? 'Service is warming up. Please click retry in a moment.' : escapeHtml(res.error);
+    usersPanel.innerHTML = `
+      <div style="text-align:center;padding:24px;color:var(--text-dim)">
+        <p style="color:var(--accent-danger);margin-bottom:12px;">${msg}</p>
+        <button class="btn btn-sm btn-outline" onclick="loadUsers()">🔄 Retry</button>
+      </div>`;
     return;
   }
   const roleColors = { Admin: 'tag-red', Manager: 'tag-gold', Staff: 'tag-green' };
@@ -1628,7 +1634,13 @@ async function loadAudit() {
   const auditPanel = document.getElementById('auditPanel');
   if (!auditPanel) return;
   if (res.error) {
-    auditPanel.innerHTML = `<p style="color:var(--accent-danger)">${escapeHtml(res.error)}</p>`;
+    const isWaking = res.error.includes('waking up') || res.error.includes('502') || res.error.includes('unavailable') || res.error.includes('Failed to fetch');
+    const msg = isWaking ? 'Service is warming up. Please click retry in a moment.' : escapeHtml(res.error);
+    auditPanel.innerHTML = `
+      <div style="text-align:center;padding:24px;color:var(--text-dim)">
+        <p style="color:var(--accent-danger);margin-bottom:12px;">${msg}</p>
+        <button class="btn btn-sm btn-outline" onclick="loadAudit()">🔄 Retry</button>
+      </div>`;
     return;
   }
   auditPanel.innerHTML = res.logs?.length

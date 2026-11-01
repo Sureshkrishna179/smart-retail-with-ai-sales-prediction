@@ -1,11 +1,17 @@
 import os
 import subprocess
+from pathlib import Path
+
+repo_root = Path(__file__).resolve().parents[1]
+js_file = repo_root / "frontend" / "js" / "main.js"
+out_file = repo_root / "js_check.txt"
+
 try:
-    with open("c:\\MY Projects\\Project AI Sales\\js_check.txt", "w") as f:
-        res = subprocess.run(["node", "-c", "c:\\MY Projects\\Project AI Sales\\frontend\\js\\main.js"], capture_output=True, text=True)
-        f.write(f"RC: {res.returncode}\n")
-        f.write(f"STDOUT: {res.stdout}\n")
-        f.write(f"STDERR: {res.stderr}\n")
+    res = subprocess.run(["node", "-c", str(js_file)], capture_output=True, text=True)
+    out_file.write_text(f"RC: {res.returncode}\nSTDOUT: {res.stdout}\nSTDERR: {res.stderr}\n", encoding="utf-8")
+    print(f"JS syntax check finished with RC: {res.returncode}")
+    if res.stderr:
+        print(res.stderr)
 except Exception as e:
-    with open("c:\\MY Projects\\Project AI Sales\\js_check.txt", "w") as f:
-        f.write(f"Error: {e}\n")
+    out_file.write_text(f"Error: {e}\n", encoding="utf-8")
+    print(f"Error checking JS: {e}")

@@ -1,6 +1,8 @@
 """Shared pytest fixtures for SmartRetail AI."""
 
 import os
+os.environ.setdefault("REQUIRE_AUTH", "0")
+import os
 import sys
 from pathlib import Path
 

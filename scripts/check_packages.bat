@@ -2,7 +2,7 @@
 setlocal
 
 REM Try to find working python
-set "VENV_PY=c:\MY Projects\Project AI Sales\.venv\Scripts\python.exe"
+set "VENV_PY=%~dp0..\.venv\Scripts\python.exe"
 
 echo Checking Python environments...
 echo.

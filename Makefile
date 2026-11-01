@@ -10,14 +10,14 @@ data:
 	python scripts/generate_grocery_sales.py
 
 setup-db:
-	python backend/setup_database.py
+	python src/smartretail/db/migrations/setup_database.py
 
 run: setup-db
 	python -m src.smartretail.server
 
 test:
 	python scripts/generate_grocery_sales.py
-	pytest tests -m "not integration" --cov=backend
+	pytest tests -m "not integration" --cov=src/smartretail
 
 test-all:
 	RUN_INTEGRATION_TESTS=1 pytest tests

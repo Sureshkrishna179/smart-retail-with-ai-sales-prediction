@@ -26,7 +26,7 @@ pytest tests -m "not integration"
 ## Integration tests (MySQL)
 
 1. Ensure MySQL is running and `.env` matches your instance.
-2. Run `python backend/setup_database.py` once.
+2. Run `python src/smartretail/db/migrations/setup_database.py` once.
 3. Enable integration suite:
 
 ```powershell

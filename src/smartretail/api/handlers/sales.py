@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 from datetime import datetime
 from smartretail.db.connection import db_query, db_transaction
 from smartretail.api.middleware.security_headers import json_response
@@ -63,7 +65,8 @@ def handle_billing(request):
         res = bill_inmemory_products(cart)
         return json_response(request, res)
     except Exception as e:
-        return json_response(request, {"error": str(e)}, 500)
+        logger.error("Billing error: %s", e, exc_info=True)
+        return json_response(request, {"error": "Internal server error"}, 500)
 
 @require_auth()
 def handle_get_reports(request):

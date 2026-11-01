@@ -31,6 +31,10 @@ EXPOSE 8765
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:${PORT:-8765}/dashboard.html || exit 1
 
+# Create non-root user and set permissions
+RUN useradd -m appuser && chown -R appuser:appuser /app
+USER appuser
+
 # Run the REST server
 CMD ["python", "-m", "smartretail.server"]
 

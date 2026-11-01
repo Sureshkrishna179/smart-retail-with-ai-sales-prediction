@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 from smartretail.db.connection import db_query
 from smartretail.api.middleware.security_headers import json_response
 from smartretail.api.middleware.auth import require_auth
@@ -49,7 +51,8 @@ def handle_create_user(request):
             users.append({"id": new_id, "username": username, "role": role, "is_active": 1, "last_login": None, "created_at": "Just now"})
             return json_response(request, {"success": True, "id": new_id, "username": username, "role": role})
     except Exception as e:
-        return json_response(request, {"error": str(e)}, 500)
+        logger.error("User handler error: %s", e, exc_info=True)
+        return json_response(request, {"error": "Internal server error"}, 500)
 
 @require_auth(allowed_roles=["Admin"])
 def handle_toggle_user(request):
@@ -72,7 +75,8 @@ def handle_toggle_user(request):
                     return json_response(request, {"success": True, "user": u})
             return json_response(request, {"error": "User not found"}, 404)
     except Exception as e:
-        return json_response(request, {"error": str(e)}, 500)
+        logger.error("User handler error: %s", e, exc_info=True)
+        return json_response(request, {"error": "Internal server error"}, 500)
 
 @require_auth(allowed_roles=["Admin"])
 def handle_audit_log(request):

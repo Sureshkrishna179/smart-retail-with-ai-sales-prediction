@@ -8,7 +8,7 @@ See [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md). Summary:
 
 | Path | Purpose |
 |------|---------|
-| `backend/` | API server, DB setup, ML (`paths.py` for roots) |
+| `src/smartretail/` | API server, DB setup, ML (`paths.py` for roots) |
 | `frontend/` | Dashboard SPA |
 | `data/` | Datasets; `samples/` for demos |
 | `deploy/` | Docker, Render, Railway |
@@ -87,8 +87,8 @@ Date,Product,Sales_Qty
 ## 6. Running the application
 
 1. Copy `.env.example` → `.env` and set MySQL credentials.
-2. `py -3 backend/setup_database.py` — schema + seed catalog.
-3. `.\start.ps1` or `py -3 backend/serve_dashboard.py` — open printed URL.
+2. `py -3 src/smartretail/db/migrations/setup_database.py` — schema + seed catalog.
+3. `.\start.ps1` or `py -3 src/smartretail/server.py` — open printed URL.
 
 ## 7. Git and release
 

@@ -14,6 +14,7 @@ Reads real product catalog from `files/products.csv` and provides:
 """
 
 import csv
+import threading
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -28,6 +29,7 @@ _PRODUCTS: List[Dict[str, Any]] = []
 _INVENTORY_LOG: List[Dict[str, Any]] = []
 _AUDIT_LOG: List[Dict[str, Any]] = []
 _INITIALIZED = False
+_store_lock = threading.RLock()
 
 
 def _parse_unit(pack_size: str) -> str:
@@ -39,8 +41,9 @@ def _parse_unit(pack_size: str) -> str:
 
 def _init_store():
     global _PRODUCTS, _AUDIT_LOG, _INITIALIZED
-    if _INITIALIZED and _PRODUCTS:
-        return
+    with _store_lock:
+        if _INITIALIZED and _PRODUCTS:
+            return
 
     _PRODUCTS = []
     if PRODUCTS_CSV.is_file():

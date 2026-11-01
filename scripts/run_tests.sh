@@ -13,7 +13,7 @@ fi
 
 echo ""
 echo "Running unit tests..."
-python3 -m pytest tests -m "not integration" --cov=backend --cov-report=term-missing
+python3 -m pytest tests -m "not integration" --cov=src/smartretail --cov-report=term-missing
 
 if [[ "${RUN_INTEGRATION_TESTS:-}" == "1" ]]; then
   echo ""

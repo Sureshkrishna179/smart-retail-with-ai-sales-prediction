@@ -1,7 +1,7 @@
 @echo off
 setlocal
-set "PYTHON=c:\MY Projects\Project AI Sales\.venv\Scripts\python.exe"
-set "SCRIPT=c:\MY Projects\Project AI Sales\scripts\forecast_lgbm.py"
+set "PYTHON=%~dp0..\.venv\Scripts\python.exe"
+set "SCRIPT=%~dp0forecast_lgbm.py"
 set PYTHONIOENCODING=utf-8
 
 echo ============================================================
@@ -26,4 +26,4 @@ echo ============================================================
 "%PYTHON%" "%SCRIPT%"
 echo ============================================================
 echo.
-echo Output files in: c:\MY Projects\Project AI Sales\files\output\
+echo Output files in: %~dp0..\files\output\

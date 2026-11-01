@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 from smartretail.db.connection import db_query
 from smartretail.api.middleware.security_headers import json_response
 from smartretail.api.middleware.auth import require_auth
@@ -58,4 +60,5 @@ def handle_restock(request):
             })
         return json_response(request, {"error": "Product not found"}, 404)
     except Exception as e:
-        return json_response(request, {"error": str(e)}, 500)
+        logger.error("Restock error: %s", e, exc_info=True)
+        return json_response(request, {"error": "Internal server error"}, 500)

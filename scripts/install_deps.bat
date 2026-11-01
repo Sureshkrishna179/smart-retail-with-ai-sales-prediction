@@ -1,6 +1,6 @@
 @echo off
 setlocal
-set "PYTHON=c:\MY Projects\Project AI Sales\.venv\Scripts\python.exe"
+set "PYTHON=%~dp0..\.venv\Scripts\python.exe"
 
 echo Installing packages into .venv ...
 "%PYTHON%" -m pip install lightgbm matplotlib scipy scikit-learn

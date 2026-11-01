@@ -64,3 +64,8 @@ Thumbs.db
 ehthumbs.db
 Desktop.ini
 .DS_Store
+
+files/output/*.csv
+files/output/*.model
+js_check.txt
+data/database_dump.sql

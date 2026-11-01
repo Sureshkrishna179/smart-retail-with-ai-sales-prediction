@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 from smartretail.db.connection import get_connection, DB_CONFIG
 from smartretail.api.middleware.security_headers import json_response
 from smartretail.api.middleware.auth import require_auth
@@ -15,7 +17,8 @@ def handle_db_status(request):
         else:
             return json_response(request, {"status": "disconnected", "error": "Failed to connect to database"})
     except Exception as e:
-        return json_response(request, {"status": "disconnected", "error": str(e)})
+        logger.error("DB status error: %s", e, exc_info=True)
+        return json_response(request, {"status": "disconnected", "error": "Internal server error"})
 
 @require_auth()
 def handle_get_festivals(request):

@@ -26,7 +26,7 @@ jobs:
         run: python scripts/generate_grocery_sales.py
 
       - name: Unit tests
-        run: pytest tests -m "not integration" --cov=backend --cov-report=xml
+        run: pytest tests -m "not integration" --cov=src/smartretail --cov-report=xml
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4
@@ -51,14 +51,14 @@ jobs:
 
       - name: SAST — Bandit (Python static analysis)
         run: |
-          bandit -r backend/ src/ -ll --format json -o bandit-report.json
-          bandit -r backend/ src/ -ll
+          bandit -r src/ -ll --format json -o bandit-report.json
+          bandit -r src/ -ll
 
       - name: SCA — pip-audit (dependency CVE scan)
         run: pip-audit -r requirements.txt --output-format=json -o pip-audit-report.json || pip-audit -r requirements.txt
 
       - name: Build image for scanning
-        run: docker build -t smartretail-scan:ci -f deploy/Dockerfile .
+        run: docker build -t smartretail-scan:ci -f Dockerfile .
         continue-on-error: true
 
       - name: Container scan — Trivy
@@ -116,7 +116,7 @@ jobs:
           PORT: "8765"
           CORS_ORIGINS: http://localhost:8765
           REQUIRE_AUTH: "0"
-        run: python backend/setup_database.py
+        run: python src/smartretail/db/migrations/setup_database.py
 
       - name: Generate grocery data
         run: python scripts/generate_grocery_sales.py
@@ -151,7 +151,7 @@ jobs:
       - name: Build and push container image
         run: |
           IMAGE=asia-south1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/smartretail/api:${{ github.sha }}
-          docker build -t $IMAGE -f deploy/Dockerfile .
+          docker build -t $IMAGE -f Dockerfile .
           docker push $IMAGE
 
       - name: Deploy to Cloud Run

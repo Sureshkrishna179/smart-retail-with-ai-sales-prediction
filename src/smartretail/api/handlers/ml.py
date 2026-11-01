@@ -1,4 +1,5 @@
 import io
+import threading
 import logging
 import pandas as pd
 import numpy as np
@@ -11,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 # Model storage for in-memory / CSV models
 _models: dict[str, Any] = {}
+_models_lock = threading.RLock()
 _csv_meta: dict[str, Any] = {"total_rows": 0, "sku_count": 0}
 
 # ── Product Tokenizer (Two-Way ID ↔ Name Mapper) ────────────────────────────
@@ -362,22 +364,28 @@ def train_model_from_csv(csv_text, product_name):
             ]
             daily_map = {r["date"]: r["quantity"] for r in daily_records}
 
-            _models[p_name] = {
-                "model": final_model, "avg": avg, "accuracy": accuracy, "source": "csv",
-                "product_id": surrogate_id,
-                "metrics": {
-                    "rmse": round(rmse, 4),
-                    "mae": round(mae, 4),
-                    "r2": round(r2_score, 4),
-                    "wape": round(wape, 4)
-                },
-                "recent_sales": recent_sales,
-                "last_date": last_dt,
-                "dow_means": dow_means,
-                "daily_records": daily_records,
-                "daily_map": daily_map,
-                "rec_count": len(prod_data),
-            }
+            recent_history = [
+                {"date": d.strftime("%Y-%m-%d"), "quantity": int(round(float(q)))}
+                for d, q in zip(prod_data['Date'].tail(14), y.tail(14))
+            ]
+            with _models_lock:
+                _models[p_name] = {
+                    "model": final_model, "avg": avg, "accuracy": accuracy, "source": "csv",
+                    "product_id": surrogate_id,
+                    "metrics": {
+                        "rmse": round(rmse, 4),
+                        "mae": round(mae, 4),
+                        "r2": round(r2_score, 4),
+                        "wape": round(wape, 4)
+                    },
+                    "recent_history": recent_history,
+                    "recent_sales": recent_sales,
+                    "last_date": last_dt,
+                    "dow_means": dow_means,
+                    "daily_records": daily_records,
+                    "daily_map": daily_map,
+                    "rec_count": len(prod_data),
+                }
             total_trained += 1
             trained_names.append(p_name)
             
@@ -707,7 +715,8 @@ def handle_train(request):
             "elapsed_sec":  result["elapsed_sec"],
         })
     except Exception as e:
-        return json_response(request, {"error": str(e)}, 500)
+        logger.error("Unhandled error: %s", e, exc_info=True)
+        return json_response(request, {"error": "Internal server error"}, 500)
 
 
 @require_auth()
@@ -722,7 +731,8 @@ def handle_model_info(request):
             info["core_b_rows"] = _csv_meta.get("total_rows", 0)
         return json_response(request, info)
     except Exception as e:
-        return json_response(request, {"error": str(e)}, 500)
+        logger.error("Unhandled error: %s", e, exc_info=True)
+        return json_response(request, {"error": "Internal server error"}, 500)
 
 @require_auth()
 def handle_predict(request):
@@ -755,24 +765,14 @@ def handle_predict(request):
             
         if is_core_b:
             if product == "ALL":
-                csv_totals: dict[str, int] = {}
+                csv_totals = {}
                 for p in csv_products:
-                    for d, q in _models[p].get("daily_map", {}).items():
-                        csv_totals[d] = csv_totals.get(d, 0) + q
-                sorted_csv_dates = sorted(csv_totals.keys())
+                    for item in _models.get(p, {}).get("recent_history", []):
+                        d = item["date"]
+                        csv_totals[d] = csv_totals.get(d, 0) + item["quantity"]
+                historical_data = [{"date": d, "quantity": int(round(csv_totals[d]))} for d in sorted(csv_totals.keys())]
             else:
-                csv_totals = _models[product].get("daily_map", {})
-                sorted_csv_dates = sorted(csv_totals.keys())
-            
-            target_preceding = [(s - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(14, 0, -1)]
-            matching = [d for d in target_preceding if d in csv_totals]
-            if len(matching) >= 7:
-                historical_data = [{"date": d, "quantity": int(round(csv_totals.get(d, 0)))} for d in target_preceding]
-            elif sorted_csv_dates:
-                last_14 = sorted_csv_dates[-14:]
-                historical_data = [{"date": d, "quantity": int(round(csv_totals[d]))} for d in last_14]
-            else:
-                historical_data = []
+                historical_data = list(_models.get(product, {}).get("recent_history", []))
         else:
             hist_start = (s - timedelta(days=14)).strftime("%Y-%m-%d")
             hist_end = (s - timedelta(days=1)).strftime("%Y-%m-%d")
@@ -821,10 +821,13 @@ def handle_predict(request):
             "source": source,
             "is_core_b": is_core_b,
             "sku_count": len(csv_products) if is_core_b else None,
+            "n_series": len(csv_products) if is_core_b else None,
             "csv_row_count": _csv_meta.get("total_rows", 0) if is_core_b else None,
+            "total_rows": _csv_meta.get("total_rows", 0) if is_core_b else None,
         })
     except Exception as e:
-        return json_response(request, {"error": str(e)}, 500)
+        logger.error("Unhandled error: %s", e, exc_info=True)
+        return json_response(request, {"error": "Internal server error"}, 500)
 
 @require_auth()
 def handle_get_trained_products(request):
@@ -840,4 +843,5 @@ def handle_get_trained_products(request):
             "csv_row_count": _csv_meta.get("total_rows", 0)
         })
     except Exception as e:
-        return json_response(request, {"error": str(e)}, 500)
+        logger.error("Unhandled error: %s", e, exc_info=True)
+        return json_response(request, {"error": "Internal server error"}, 500)

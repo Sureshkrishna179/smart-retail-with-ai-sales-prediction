@@ -62,7 +62,7 @@ except ImportError:
 # ─────────────────────────────────────────────
 # Paths
 # ─────────────────────────────────────────────
-BASE   = r"c:\MY Projects\Project AI Sales"
+BASE = str(Path(__file__).resolve().parents[1])
 FILES  = os.path.join(BASE, "files")
 OUTPUT = os.path.join(FILES, "output")
 os.makedirs(OUTPUT, exist_ok=True)

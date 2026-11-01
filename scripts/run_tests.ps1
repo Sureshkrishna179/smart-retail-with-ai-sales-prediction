@@ -12,7 +12,7 @@ if (-not (Test-Path "data\grocery_sales_realistic.csv")) {
 
 Write-Host ""
 Write-Host "Running unit tests..."
-py -3 -m pytest tests -m "not integration" --cov=backend --cov-report=term-missing
+py -3 -m pytest tests -m "not integration" --cov=src/smartretail --cov-report=term-missing
 
 $runIntegration = $env:RUN_INTEGRATION_TESTS -eq "1"
 if ($runIntegration) {

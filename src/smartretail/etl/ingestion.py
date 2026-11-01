@@ -260,6 +260,8 @@ def _parse_multipart(request):
     """
     content_type = request.headers.get("Content-Type", "")
     content_length = int(request.headers.get("Content-Length", 0))
+    if not (0 < content_length <= MAX_FILE_SIZE_BYTES):
+        raise ValueError(f"Content-Length must be between 1 and {MAX_FILE_SIZE_BYTES} bytes")
 
     if "multipart/form-data" not in content_type:
         raise ValueError("Content-Type must be multipart/form-data")
