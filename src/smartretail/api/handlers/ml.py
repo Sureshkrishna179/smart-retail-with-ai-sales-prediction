@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 # Model storage for in-memory / CSV models
 _models: dict[str, Any] = {}
+_csv_meta: dict[str, Any] = {"total_rows": 0, "sku_count": 0}
 
 # ── Product Tokenizer (Two-Way ID ↔ Name Mapper) ────────────────────────────
 # Encodes user raw product names → clean surrogate IDs for ML training,
@@ -293,7 +294,6 @@ def train_model_from_csv(csv_text, product_name):
             prod_data = df[df['Product'] == p_name].copy()
             if len(prod_data) == 0:
                 continue
-
             # 1. Daily Aggregation: group by Date and sum Sales_Qty to consolidate multiple daily transactions
             prod_data = prod_data.groupby('Date', as_index=False)['Sales_Qty'].sum()
             prod_data = prod_data.sort_values(by='Date').reset_index(drop=True)
@@ -304,36 +304,78 @@ def train_model_from_csv(csv_text, product_name):
                 continue
                 
             assert isinstance(prod_data, pd.DataFrame)
+            n_rows = len(prod_data)
+            split_idx = int(np.floor(n_rows * 0.8))
+            if split_idx >= n_rows:
+                split_idx = n_rows - 1
+            if split_idx < 1:
+                split_idx = 1
 
             # 2. Add Lag & Rolling Features
             X = _build_feature_df(prod_data)
             y = prod_data['Sales_Qty'].astype(float)
 
-            # 3. Prevent Per-SKU Overfitting: constrained hyperparameters
-            model = RandomForestRegressor(
+            # 3. Strict Chronological Validation (Zero Leakage, 80/20 train/test holdout)
+            X_train, y_train = X.iloc[:split_idx], y.iloc[:split_idx]
+            X_test, y_test = X.iloc[split_idx:], y.iloc[split_idx:]
+
+            val_model = RandomForestRegressor(
                 n_estimators=100,
                 max_depth=10,
                 min_samples_leaf=2,
                 random_state=42,
                 n_jobs=-1
             )
-            model.fit(X, y)
+            val_model.fit(X_train, y_train)
 
-            y_pred = model.predict(X)
-            rmse = float(np.sqrt(mean_squared_error(y, y_pred)))
-            mae  = float(mean_absolute_error(y, y_pred))
-            
-            r2_score = model.score(X, y)
-            accuracy = max(0.0, min(100.0, round(r2_score * 100, 1)))
-            
+            y_pred_test = val_model.predict(X_test)
+            rmse = float(np.sqrt(mean_squared_error(y_test, y_pred_test)))
+            mae  = float(mean_absolute_error(y_test, y_pred_test))
+            r2_score = float(val_model.score(X_test, y_test))
+            sum_y_test = float(y_test.sum())
+            wape = float(np.sum(np.abs(y_test - y_pred_test)) / sum_y_test) if sum_y_test > 0 else 0.0
+
+            if r2_score > 0:
+                accuracy = max(0.0, min(100.0, round(r2_score * 100, 1)))
+            else:
+                y_mean = float(y_test.mean()) if sum_y_test > 0 else float(y.mean())
+                accuracy = max(0.0, min(100.0, round((1.0 - min(1.0, mae / max(1.0, y_mean))) * 100, 1)))
+
+            # Refit final production model on 100% of product's aggregated rows
+            final_model = RandomForestRegressor(
+                n_estimators=100,
+                max_depth=10,
+                min_samples_leaf=2,
+                random_state=42,
+                n_jobs=-1
+            )
+            final_model.fit(X, y)
+
             avg = float(cast(Any, y.mean()))
             surrogate_id = _csv_tokenizer.get_id(p_name) or p_name
             recent_sales = list(prod_data['Sales_Qty'].astype(float).tail(14))
+            last_dt = prod_data['Date'].max()
+            dow_means = prod_data.groupby(prod_data['Date'].dt.dayofweek)['Sales_Qty'].mean().to_dict()
+            daily_records = [
+                {"date": d.strftime("%Y-%m-%d"), "quantity": int(round(float(q)))}
+                for d, q in zip(prod_data['Date'], prod_data['Sales_Qty'])
+            ]
+            daily_map = {r["date"]: r["quantity"] for r in daily_records}
+
             _models[p_name] = {
-                "model": model, "avg": avg, "accuracy": accuracy, "source": "csv",
+                "model": final_model, "avg": avg, "accuracy": accuracy, "source": "csv",
                 "product_id": surrogate_id,
-                "metrics": {"rmse": round(rmse, 4), "mae": round(mae, 4)},
+                "metrics": {
+                    "rmse": round(rmse, 4),
+                    "mae": round(mae, 4),
+                    "r2": round(r2_score, 4),
+                    "wape": round(wape, 4)
+                },
                 "recent_sales": recent_sales,
+                "last_date": last_dt,
+                "dow_means": dow_means,
+                "daily_records": daily_records,
+                "daily_map": daily_map,
                 "rec_count": len(prod_data),
             }
             total_trained += 1
@@ -341,6 +383,9 @@ def train_model_from_csv(csv_text, product_name):
             
         if total_trained == 0:
             return False, "Not enough data to train any model."
+            
+        _csv_meta["total_rows"] = int(len(df))
+        _csv_meta["sku_count"] = int(total_trained)
             
         if product_name == "ALL":
             summary = f"Trained {total_trained} models from CSV: {', '.join(trained_names[:10])}"
@@ -371,22 +416,61 @@ def average_accuracy(accuracy_by_product):
     values = [v for v in accuracy_by_product.values() if v is not None]
     return round(sum(values) / len(values), 1) if values else None
 
+def _prepare_core_b_history(info: dict, target_start: datetime) -> list[float]:
+    """Prepare and step forward the rolling history buffer for a Core B model, bridging any date gaps."""
+    avg = float(info.get("avg", 0.0))
+    dow_means = info.get("dow_means", {})
+    history = list(info.get("recent_sales", [avg]))
+    last_date = info.get("last_date")
+    model = info.get("model")
+    
+    if last_date is not None and model is not None:
+        last_dt = pd.Timestamp(last_date).to_pydatetime()
+        # If there is a gap between last CSV date and forecast start
+        if target_start > last_dt + timedelta(days=1):
+            gap_days = (target_start - (last_dt + timedelta(days=1))).days
+            if gap_days > 60:
+                # Large gap: initialize rolling window 14 days before start using day-of-week averages
+                gap_start = target_start - timedelta(days=14)
+                history = [float(dow_means.get((gap_start + timedelta(days=i)).weekday(), avg)) for i in range(14)]
+            else:
+                gap_start = last_dt + timedelta(days=1)
+                
+            curr_gap = gap_start
+            while curr_gap < target_start:
+                lag_1 = history[-1] if history else avg
+                r3 = float(np.mean(history[-3:])) if history else avg
+                r7 = float(np.mean(history[-7:])) if history else avg
+                X_gap = _build_core_b_inference_row(curr_gap, lag_1, r3, r7)
+                raw_pred_gap = float(model.predict(X_gap)[0])
+                dow_mean = float(dow_means.get(curr_gap.weekday(), avg))
+                blended_gap = 0.75 * raw_pred_gap + 0.25 * dow_mean
+                history.append(blended_gap)
+                curr_gap += timedelta(days=1)
+                
+    return history
+
+
 def predict_sales(product_name: str, target_date: datetime):
     """Predict for a product_name on a given date using the HGBR model or Core B CSV model."""
     if product_name in _models and _models[product_name].get("source") == "csv":
         info = _models[product_name]
         model = info["model"]
         avg = info.get("avg", 0.0)
-        history = list(info.get("recent_sales", [avg]))
+        dow_means = info.get("dow_means", {})
+        history = _prepare_core_b_history(info, target_date)
         lag_1 = history[-1] if history else avg
         r3 = float(np.mean(history[-3:])) if history else avg
         r7 = float(np.mean(history[-7:])) if history else avg
         X = _build_core_b_inference_row(target_date, lag_1, r3, r7)
-        base_pred = float(model.predict(X)[0])
+        raw_pred = float(model.predict(X)[0])
+        dow_mean = float(dow_means.get(target_date.weekday(), avg))
+        blended = 0.75 * raw_pred + 0.25 * dow_mean
         mult, boosts = get_demand_multiplier(target_date)
-        adjusted = round(max(0.0, base_pred * mult), 1)
+        adjusted = int(round(max(0.0, blended * mult)))
+        base_val = int(round(max(0.0, blended)))
         details: SalesPredictionDetails = {
-            "base": round(base_pred, 1),
+            "base": base_val,
             "multiplier": mult,
             "boosts": boosts,
             "adjusted": adjusted,
@@ -403,9 +487,9 @@ def predict_sales(product_name: str, target_date: datetime):
         return None, None
     base_pred = result["forecast_units"]
     mult, boosts = get_demand_multiplier(target_date)
-    adjusted = round(base_pred, 1)
+    adjusted = int(round(base_pred))
     details: SalesPredictionDetails = {
-        "base": round(base_pred, 1),
+        "base": int(round(base_pred)),
         "multiplier": 1.0,
         "boosts": [],
         "adjusted": adjusted,
@@ -423,9 +507,9 @@ def predict_range(product_name, start_date, end_date):
     # ── ALL products from uploaded CSV ──────────────────────────────────
     csv_products = [k for k, v in _models.items() if v.get('source') == 'csv']
     if product_name == "ALL" and csv_products:
-        results_by_date: dict[str, float] = {}
-        daily_breakdowns: dict[str, dict[str, float]] = {}
-        breakdown: dict[str, float] = {}
+        results_by_date: dict[str, int] = {}
+        daily_breakdowns: dict[str, dict[str, int]] = {}
+        breakdown: dict[str, int] = {}
         accuracy_by_product: dict[str, float] = {}
         
         for p_name in csv_products:
@@ -433,33 +517,34 @@ def predict_range(product_name, start_date, end_date):
             model = info['model']
             acc = info.get('accuracy', 85.0)
             avg = info.get('avg', 0.0)
-            history = list(info.get('recent_sales', [avg]))
-            product_total = 0.0
+            dow_means = info.get('dow_means', {})
+            history = _prepare_core_b_history(info, start_date)
+            product_total = 0
             curr = start_date
             while curr <= end_date:
                 lag_1 = history[-1] if history else avg
                 r3 = float(np.mean(history[-3:])) if history else avg
                 r7 = float(np.mean(history[-7:])) if history else avg
                 X = _build_core_b_inference_row(curr, lag_1, r3, r7)
-                base_pred = float(model.predict(X)[0])
-                history.append(base_pred)  # autoregressive update
+                raw_pred = float(model.predict(X)[0])
+                dow_mean = float(dow_means.get(curr.weekday(), avg))
+                blended = 0.75 * raw_pred + 0.25 * dow_mean
+                history.append(blended)  # autoregressive dampening
                 
                 mult, boosts = get_demand_multiplier(curr)
-                adj = round(max(0.0, base_pred * mult), 1)
+                adj = int(round(max(0.0, blended * mult)))
                 d_str = curr.strftime('%Y-%m-%d')
-                results_by_date[d_str] = results_by_date.get(d_str, 0.0) + adj
+                results_by_date[d_str] = results_by_date.get(d_str, 0) + adj
                 if d_str not in daily_breakdowns:
                     daily_breakdowns[d_str] = {}
-                # ── Step 3: DECODE — user's real product name in the daily breakdown ──
-                daily_breakdowns[d_str][p_name] = round(
-                    daily_breakdowns[d_str].get(p_name, 0.0) + adj, 1)
+                daily_breakdowns[d_str][p_name] = adj
                 product_total += adj
                 curr += timedelta(days=1)
-            breakdown[p_name] = round(product_total, 1)
+            breakdown[p_name] = product_total
             accuracy_by_product[p_name] = acc
         
         results = [{'date': d, 'day': pd.Timestamp(d).strftime('%A'),
-                    'predicted_qty': round(v, 1), 'base_qty': round(v, 1),
+                    'predicted_qty': v, 'base_qty': v,
                     'multiplier': 1.0, 'boosts': [],
                     'daily_breakdown': daily_breakdowns.get(d, {})}
                    for d, v in sorted(results_by_date.items())]
@@ -467,36 +552,42 @@ def predict_range(product_name, start_date, end_date):
         return results, breakdown, avg_acc, accuracy_by_product
     
     # ── Single product from uploaded CSV ────────────────────────────────
-    if product_name in _models:
+    if product_name in _models and _models[product_name].get("source") == "csv":
         info = _models[product_name]
         model = info["model"]
         avg = info.get('avg', 0.0)
-        history = list(info.get('recent_sales', [avg]))
+        dow_means = info.get('dow_means', {})
+        history = _prepare_core_b_history(info, start_date)
         curr = start_date
         results = []
+        product_total = 0
         while curr <= end_date:
             lag_1 = history[-1] if history else avg
             r3 = float(np.mean(history[-3:])) if history else avg
             r7 = float(np.mean(history[-7:])) if history else avg
             X = _build_core_b_inference_row(curr, lag_1, r3, r7)
-            base_pred = float(model.predict(X)[0])
-            history.append(base_pred)
+            raw_pred = float(model.predict(X)[0])
+            dow_mean = float(dow_means.get(curr.weekday(), avg))
+            blended = 0.75 * raw_pred + 0.25 * dow_mean
+            history.append(blended)
             
             mult, boosts = get_demand_multiplier(curr)
-            adj = round(max(0.0, base_pred * mult), 1)
+            adj = int(round(max(0.0, blended * mult)))
+            base_val = int(round(max(0.0, blended)))
+            product_total += adj
             d_str = curr.strftime("%Y-%m-%d")
             results.append({
                 "date": d_str,
                 "day": curr.strftime("%A"),
                 "predicted_qty": adj,
-                "base_qty": round(base_pred, 1),
+                "base_qty": base_val,
                 "multiplier": mult,
                 "boosts": boosts,
                 "daily_breakdown": {product_name: adj}
             })
             curr += timedelta(days=1)
         acc = info.get("accuracy", 85.0)
-        breakdown = {product_name: round(sum(r["predicted_qty"] for r in results), 1)}
+        breakdown = {product_name: product_total}
         return results, breakdown, acc, {product_name: acc}
 
     from smartretail.ml.predictor import predict_range as hgbr_range
@@ -526,9 +617,9 @@ def predict_range(product_name, start_date, end_date):
                     daily_breakdowns[d][disp_name] = round(daily_breakdowns[d].get(disp_name, 0.0) + qty, 1)
 
         results = [{"date": d, "day": pd.Timestamp(d).strftime("%A"),
-                    "predicted_qty": round(v, 1), "base_qty": round(v, 1),
+                    "predicted_qty": int(round(v)), "base_qty": int(round(v)),
                     "multiplier": 1.0, "boosts": [],
-                    "daily_breakdown": daily_breakdowns.get(d, {})}
+                    "daily_breakdown": {k: int(round(val)) for k, val in daily_breakdowns.get(d, {}).items()}}
                    for d, v in sorted(results_by_date.items())]
         breakdown_named: dict = {}
         accuracy_by_product: dict = {}
@@ -538,7 +629,7 @@ def predict_range(product_name, start_date, end_date):
 
         for p_id, total_qty in breakdown_raw.items():
             disp_name = _id_to_name_lookup.get(p_id, p_id)
-            breakdown_named[disp_name] = round(total_qty, 1)
+            breakdown_named[disp_name] = int(round(total_qty))
             accuracy_by_product[disp_name] = accuracy
 
         return results, breakdown_named, accuracy, accuracy_by_product
@@ -552,10 +643,10 @@ def predict_range(product_name, start_date, end_date):
                     break
         disp_name = _id_to_name_lookup.get(pid, product_name)
         results = [{"date": r["date"], "day": pd.Timestamp(r["date"]).strftime("%A"),
-                    "predicted_qty": r["forecast_units"], "base_qty": r["forecast_units"],
-                    "multiplier": 1.0, "boosts": [], "daily_breakdown": {disp_name: r["forecast_units"]}}
+                    "predicted_qty": int(round(r["forecast_units"])), "base_qty": int(round(r["forecast_units"])),
+                    "multiplier": 1.0, "boosts": [], "daily_breakdown": {disp_name: int(round(r["forecast_units"]))}}
                    for r in rows]
-        breakdown = {disp_name: round(sum(r["forecast_units"] for r in rows), 1)}
+        breakdown = {disp_name: int(round(sum(r["forecast_units"] for r in rows)))}
         info = get_model_info()
         mae  = info.get("metrics", {}).get("MAE", 0)
         accuracy = round(max(0, 100 - mae * 3), 1)
@@ -579,24 +670,22 @@ def handle_train(request):
             success, msg = train_model_from_csv(csv_data, product)
             if not success:
                 return json_response(request, {"error": msg}, 400)
-            trained_products = _csv_tokenizer.get_all_names()
-            if not trained_products:
-                trained_products = [k for k, v in _models.items() if v.get("source") == "csv"]
+            names = list(_models.keys())
+            mapping = _csv_tokenizer.get_name_to_id_map()
             return json_response(request, {
-                "success": True,
-                "message": msg,
-                "source": "uploaded_csv",
-                "trained_products": trained_products,
-                "tokenizer_map": _csv_tokenizer.get_name_to_id_map(),
+                "success":          True,
+                "message":          msg,
+                "source":           "uploaded_csv",
+                "trained_products": names,
+                "tokenizer_map":    mapping,
+                "sku_count":        len(names),
+                "csv_row_count":    _csv_meta.get("total_rows", 0),
             })
 
-        # Full HGBR training on server-side sales_data.csv
-        test_size = float(body.get("test_size", 0.20))
-        result    = hgbr_train(test_size=test_size)
-        metrics   = result["metrics"]
-
-        # Refresh product lookups after training
+        # Canonical sales_data.csv — Detrended HGBR (Core A)
         global _product_lookup, _id_to_name_lookup
+        result = hgbr_train(test_size=0.2)
+        metrics = result["metrics"]
         _product_lookup = get_product_lookup()
         _id_to_name_lookup = get_id_to_name_lookup()
 
@@ -626,6 +715,11 @@ def handle_model_info(request):
     """Return model status — whether it's loaded, its metrics, etc."""
     try:
         info = get_model_info()
+        csv_products = [k for k, v in _models.items() if v.get("source") == "csv"]
+        if csv_products:
+            info["core_b_active"] = True
+            info["core_b_skus"] = len(csv_products)
+            info["core_b_rows"] = _csv_meta.get("total_rows", 0)
         return json_response(request, info)
     except Exception as e:
         return json_response(request, {"error": str(e)}, 500)
@@ -649,49 +743,72 @@ def handle_predict(request):
         if not results:
             return json_response(request, {"error": "No predictions. Train the model first."}, 400)
             
-        total_predicted = sum(r["predicted_qty"] for r in results)
+        total_predicted = int(round(sum(r["predicted_qty"] for r in results)))
         
+        csv_products = [k for k, v in _models.items() if v.get('source') == 'csv']
+        is_core_b = (product == "ALL" and len(csv_products) > 0) or (product in _models and _models[product].get("source") == "csv")
+
         if product == "ALL":
-            source = "database/csv (multiple)"
+            source = "database/csv (multiple)" if is_core_b else "database"
         else:
-            source = _models.get(product, {}).get("source", "unknown")
+            source = _models.get(product, {}).get("source", "database")
             
-        hist_start = (s - timedelta(days=14)).strftime("%Y-%m-%d")
-        hist_end = (s - timedelta(days=1)).strftime("%Y-%m-%d")
-        
-        hist_rows = []
-        try:
+        if is_core_b:
             if product == "ALL":
-                hist_query = """
-                    SELECT DATE_FORMAT(sale_date, '%Y-%m-%d') as date, SUM(quantity) as quantity
-                    FROM sales 
-                    WHERE sale_date >= %s AND sale_date <= %s
-                    GROUP BY DATE_FORMAT(sale_date, '%Y-%m-%d')
-                    ORDER BY date
-                """
-                hist_rows = db_query(hist_query, (hist_start, hist_end))
+                csv_totals: dict[str, int] = {}
+                for p in csv_products:
+                    for d, q in _models[p].get("daily_map", {}).items():
+                        csv_totals[d] = csv_totals.get(d, 0) + q
+                sorted_csv_dates = sorted(csv_totals.keys())
             else:
-                hist_query = """
-                    SELECT DATE_FORMAT(s.sale_date, '%Y-%m-%d') as date, SUM(s.quantity) as quantity
-                    FROM sales s JOIN products p ON s.product_id=p.id
-                    WHERE p.name LIKE %s AND s.sale_date >= %s AND s.sale_date <= %s
-                    GROUP BY DATE_FORMAT(s.sale_date, '%Y-%m-%d')
-                    ORDER BY date
-                """
-                hist_rows = db_query(hist_query, (f"%{product}%", hist_start, hist_end))
-        except Exception:
-            hist_rows = []
+                csv_totals = _models[product].get("daily_map", {})
+                sorted_csv_dates = sorted(csv_totals.keys())
             
-        hist_dict = {r['date']: float(r['quantity']) for r in hist_rows} if hist_rows else {}
-        historical_data = []
-        curr_hist = s - timedelta(days=14)
-        while curr_hist < s:
-            d_str = curr_hist.strftime("%Y-%m-%d")
-            historical_data.append({
-                "date": d_str,
-                "quantity": hist_dict.get(d_str, 0)
-            })
-            curr_hist += timedelta(days=1)
+            target_preceding = [(s - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(14, 0, -1)]
+            matching = [d for d in target_preceding if d in csv_totals]
+            if len(matching) >= 7:
+                historical_data = [{"date": d, "quantity": int(round(csv_totals.get(d, 0)))} for d in target_preceding]
+            elif sorted_csv_dates:
+                last_14 = sorted_csv_dates[-14:]
+                historical_data = [{"date": d, "quantity": int(round(csv_totals[d]))} for d in last_14]
+            else:
+                historical_data = []
+        else:
+            hist_start = (s - timedelta(days=14)).strftime("%Y-%m-%d")
+            hist_end = (s - timedelta(days=1)).strftime("%Y-%m-%d")
+            hist_rows = []
+            try:
+                if product == "ALL":
+                    hist_query = """
+                        SELECT DATE_FORMAT(sale_date, '%Y-%m-%d') as date, SUM(quantity) as quantity
+                        FROM sales 
+                        WHERE sale_date >= %s AND sale_date <= %s
+                        GROUP BY DATE_FORMAT(sale_date, '%Y-%m-%d')
+                        ORDER BY date
+                    """
+                    hist_rows = db_query(hist_query, (hist_start, hist_end))
+                else:
+                    hist_query = """
+                        SELECT DATE_FORMAT(s.sale_date, '%Y-%m-%d') as date, SUM(s.quantity) as quantity
+                        FROM sales s JOIN products p ON s.product_id=p.id
+                        WHERE p.name LIKE %s AND s.sale_date >= %s AND s.sale_date <= %s
+                        GROUP BY DATE_FORMAT(s.sale_date, '%Y-%m-%d')
+                        ORDER BY date
+                    """
+                    hist_rows = db_query(hist_query, (f"%{product}%", hist_start, hist_end))
+            except Exception:
+                hist_rows = []
+                
+            hist_dict = {r['date']: float(r['quantity']) for r in hist_rows} if hist_rows else {}
+            historical_data = []
+            curr_hist = s - timedelta(days=14)
+            while curr_hist < s:
+                d_str = curr_hist.strftime("%Y-%m-%d")
+                historical_data.append({
+                    "date": d_str,
+                    "quantity": int(round(hist_dict.get(d_str, 0)))
+                })
+                curr_hist += timedelta(days=1)
             
         return json_response(request, {
             "predictions": results, 
@@ -699,9 +816,12 @@ def handle_predict(request):
             "breakdown": breakdown,
             "accuracy": accuracy,
             "accuracy_by_product": accuracy_by_product,
-            "total_predicted": round(total_predicted, 1), 
+            "total_predicted": total_predicted, 
             "product": product, 
-            "source": source
+            "source": source,
+            "is_core_b": is_core_b,
+            "sku_count": len(csv_products) if is_core_b else None,
+            "csv_row_count": _csv_meta.get("total_rows", 0) if is_core_b else None,
         })
     except Exception as e:
         return json_response(request, {"error": str(e)}, 500)
@@ -713,7 +833,11 @@ def handle_get_trained_products(request):
         names = _csv_tokenizer.get_all_names()
         mapping = _csv_tokenizer.get_name_to_id_map()
         items = [{"name": n, "product_id": mapping.get(n, n)} for n in names]
-        return json_response(request, {"products": items, "tokenizer_map": mapping})
+        return json_response(request, {
+            "products": items,
+            "tokenizer_map": mapping,
+            "sku_count": len(names),
+            "csv_row_count": _csv_meta.get("total_rows", 0)
+        })
     except Exception as e:
         return json_response(request, {"error": str(e)}, 500)
-
