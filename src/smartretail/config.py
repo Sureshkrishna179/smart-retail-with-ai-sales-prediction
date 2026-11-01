@@ -22,7 +22,7 @@ class Settings:
     
     # REQUIRE_AUTH: 1 to enforce login overlay (production default), 0 to bypass in dev/demo
     require_auth: bool = os.getenv("REQUIRE_AUTH", "1").lower() not in ("0", "false", "no")
-    cors_origins: list = None
+    cors_origins: list[str] | None = None
     rate_limit_max: int = int(os.getenv("RATE_LIMIT_MAX", "60"))
     rate_limit_login: int = int(os.getenv("RATE_LIMIT_LOGIN", "5"))
     debug: bool = os.getenv("LOG_DEBUG", "0") == "1"
