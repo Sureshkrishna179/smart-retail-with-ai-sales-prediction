@@ -133,10 +133,10 @@ jobs:
           REQUIRE_AUTH: "0"
         run: pytest tests -m integration
 
-  # ─── Deploy to GCP (main branch only) ──────────────────────────
+  # ─── Deploy to GCP (main branch only, opt-in via repository variable ENABLE_GCP_DEPLOY=true) ──
   deploy:
     needs: [test, integration]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: vars.ENABLE_GCP_DEPLOY == 'true' && github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: read

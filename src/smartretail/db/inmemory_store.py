@@ -26,6 +26,7 @@ BASE_DIR = Path(__file__).resolve().parents[3]
 PRODUCTS_CSV = BASE_DIR / "files" / "products.csv"
 
 _PRODUCTS: List[Dict[str, Any]] = []
+_USERS: List[Dict[str, Any]] = []
 _INVENTORY_LOG: List[Dict[str, Any]] = []
 _AUDIT_LOG: List[Dict[str, Any]] = []
 _INITIALIZED = False
@@ -40,7 +41,7 @@ def _parse_unit(pack_size: str) -> str:
 
 
 def _init_store():
-    global _PRODUCTS, _AUDIT_LOG, _INITIALIZED
+    global _PRODUCTS, _USERS, _AUDIT_LOG, _INITIALIZED
     with _store_lock:
         if _INITIALIZED and _PRODUCTS:
             return
@@ -103,6 +104,13 @@ def _init_store():
                 "min_stock_level": 50,
             })
 
+    if not _USERS:
+        _USERS = [
+            {"id": 1, "username": "admin", "role": "Admin", "is_active": 1, "last_login": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "created_at": "2025-01-01 00:00:00"},
+            {"id": 2, "username": "manager", "role": "Manager", "is_active": 1, "last_login": None, "created_at": "2025-01-15 00:00:00"},
+            {"id": 3, "username": "cashier", "role": "Staff", "is_active": 1, "last_login": None, "created_at": "2025-02-01 00:00:00"},
+        ]
+
     _AUDIT_LOG = [
         {
             "id": 1,
@@ -132,6 +140,32 @@ def get_inmemory_products() -> List[Dict[str, Any]]:
 def get_inmemory_alerts() -> List[Dict[str, Any]]:
     _init_store()
     return [p for p in _PRODUCTS if p["current_stock"] < p["min_stock_level"]]
+
+
+def add_inmemory_product(
+    name: str,
+    category: str,
+    unit: str,
+    price: float,
+    stock: int,
+    min_stock: int,
+) -> Dict[str, Any]:
+    """Thread-safely append a new product into the in-memory store."""
+    _init_store()
+    with _store_lock:
+        new_id = max((p["id"] for p in _PRODUCTS), default=0) + 1
+        entry = {
+            "id": new_id,
+            "product_id": f"P{new_id:03d}",
+            "name": name,
+            "category": category,
+            "unit": unit,
+            "price": round(price, 2),
+            "current_stock": stock,
+            "min_stock_level": min_stock,
+        }
+        _PRODUCTS.append(entry)
+        return dict(entry)
 
 
 def restock_inmemory_product(product_id: int, quantity: int) -> Optional[Dict[str, Any]]:
@@ -169,7 +203,9 @@ def bill_inmemory_products(items: List[Dict[str, Any]]) -> Dict[str, Any]:
             receipt.append({
                 "product_id": prod["id"],
                 "name": prod["name"],
+                "unit": prod.get("unit", ""),
                 "price": prod["price"],
+                "qty": qty,
                 "quantity": qty,
                 "total": total,
             })
@@ -181,7 +217,9 @@ def bill_inmemory_products(items: List[Dict[str, Any]]) -> Dict[str, Any]:
             receipt.append({
                 "product_id": pid,
                 "name": item.get("name", f"Item #{pid}"),
+                "unit": item.get("unit", ""),
                 "price": price,
+                "qty": qty,
                 "quantity": qty,
                 "total": total,
             })
@@ -231,11 +269,39 @@ def get_inmemory_reports() -> Dict[str, Any]:
 
 
 def get_inmemory_users() -> List[Dict[str, Any]]:
-    return [
-        {"id": 1, "username": "admin", "role": "Admin", "is_active": 1, "last_login": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "created_at": "2025-01-01 00:00:00"},
-        {"id": 2, "username": "manager", "role": "Manager", "is_active": 1, "last_login": None, "created_at": "2025-01-15 00:00:00"},
-        {"id": 3, "username": "cashier", "role": "Staff", "is_active": 1, "last_login": None, "created_at": "2025-02-01 00:00:00"},
-    ]
+    _init_store()
+    with _store_lock:
+        return [dict(u) for u in _USERS]
+
+
+def create_inmemory_user(username: str, role: str) -> Optional[Dict[str, Any]]:
+    """Create a user in the in-memory store; returns None if username already exists."""
+    _init_store()
+    with _store_lock:
+        if any(u["username"].lower() == username.lower() for u in _USERS):
+            return None
+        new_id = max((u["id"] for u in _USERS), default=0) + 1
+        user = {
+            "id": new_id,
+            "username": username,
+            "role": role,
+            "is_active": 1,
+            "last_login": None,
+            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        _USERS.append(user)
+        return dict(user)
+
+
+def toggle_inmemory_user(user_id: int) -> Optional[Dict[str, Any]]:
+    """Toggle is_active for an in-memory user; returns updated dict or None."""
+    _init_store()
+    with _store_lock:
+        for u in _USERS:
+            if u["id"] == user_id:
+                u["is_active"] = 0 if u.get("is_active") else 1
+                return dict(u)
+        return None
 
 
 def get_inmemory_audit() -> List[Dict[str, Any]]:

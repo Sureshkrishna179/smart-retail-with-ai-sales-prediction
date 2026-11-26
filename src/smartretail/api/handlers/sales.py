@@ -1,7 +1,7 @@
 import logging
 logger = logging.getLogger(__name__)
 from datetime import datetime
-from smartretail.db.connection import db_query, db_transaction
+from smartretail.db.connection import db_query, db_transaction, get_connection
 from smartretail.api.middleware.security_headers import json_response
 from smartretail.api.middleware.auth import require_auth
 from smartretail.api.utils import read_json_body
@@ -18,15 +18,23 @@ def handle_billing(request):
             
         cart = body.get("cart", [])
         
-        # Try database transaction first
-        try:
+        conn = get_connection()
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
             queries = []
             receipt = []
             for item in cart:
                 pid, qty = int(item["product_id"]), int(item["quantity"])
                 prod = db_query("SELECT * FROM products WHERE id=%s", (pid,))
+                if prod is None:
+                    # Query failed cleanly: drop to in-memory fallback only if DB is degraded
+                    queries = []
+                    break
                 if not prod:
-                    raise ValueError(f"Product {pid} not found in DB")
+                    return json_response(request, {"error": f"Product {pid} not found"}, 404)
                     
                 p = prod[0]
                 if p["current_stock"] < qty:
@@ -50,7 +58,7 @@ def handle_billing(request):
                     "total": total
                 })
                 
-            if db_transaction(queries):
+            if queries and db_transaction(queries):
                 grand = sum(r["total"] for r in receipt)
                 return json_response(request, {
                     "success": True, 
@@ -58,8 +66,6 @@ def handle_billing(request):
                     "grand_total": grand, 
                     "timestamp": datetime.now().isoformat()
                 })
-        except Exception:
-            pass
             
         # In-Memory Fallback: Process cart and generate thermal receipt in-memory
         res = bill_inmemory_products(cart)

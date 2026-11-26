@@ -5,7 +5,7 @@ from smartretail.api.middleware.security_headers import json_response
 from smartretail.api.middleware.auth import require_auth
 from smartretail.api.utils import read_json_body
 from smartretail.api.validators.core import validate_add_product
-from smartretail.db.inmemory_store import get_inmemory_products
+from smartretail.db.inmemory_store import get_inmemory_products, add_inmemory_product
 
 @require_auth()
 def handle_get_products(request):
@@ -33,28 +33,17 @@ def handle_add_product(request):
         stock     = int(body.get("stock", 0))
         min_stock = int(body.get("min_stock", 50))
         
-        try:
-            pid = db_query(
-                "INSERT INTO products (name, category, unit, price, current_stock, min_stock_level) VALUES (%s,%s,%s,%s,%s,%s)",
-                (name, category, unit, price, stock, min_stock),
-                fetch=False
-            )
+        pid = db_query(
+            "INSERT INTO products (name, category, unit, price, current_stock, min_stock_level) VALUES (%s,%s,%s,%s,%s,%s)",
+            (name, category, unit, price, stock, min_stock),
+            fetch=False
+        )
+        if pid is not None:
             return json_response(request, {"success": True, "id": pid})
-        except Exception:
-            # In-memory append
-            prods = get_inmemory_products()
-            new_id = len(prods) + 1
-            prods.append({
-                "id": new_id,
-                "product_id": f"P{new_id:03d}",
-                "name": name,
-                "category": category,
-                "unit": unit,
-                "price": price,
-                "current_stock": stock,
-                "min_stock_level": min_stock
-            })
-            return json_response(request, {"success": True, "id": new_id})
+
+        # Decoupled Fallback Mode: Persist in process in-memory catalog
+        new_prod = add_inmemory_product(name, category, unit, price, stock, min_stock)
+        return json_response(request, {"success": True, "id": new_prod["id"]})
     except Exception as e:
         logger.error("Add product error: %s", e, exc_info=True)
         return json_response(request, {"error": "Internal server error"}, 500)

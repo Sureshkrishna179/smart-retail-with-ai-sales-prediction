@@ -178,7 +178,14 @@ async function doLogin() {
   currentUser = res.user;
   document.getElementById('loginOverlay')?.classList.remove('visible');
   if (errEl) errEl.style.display = 'none';
-  initApp();
+  if (_initialized) {
+    applyRoleUI();
+    updateUserDisplay();
+    checkDB();
+    loadDashboard();
+  } else {
+    initApp();
+  }
   toast('Welcome, ' + res.user.username);
 }
 
@@ -1968,13 +1975,19 @@ function initApp() {
 
 function boot() {
   restoreSession();
+  const loginBtnEl = document.getElementById('loginBtn');
+  if (loginBtnEl && !loginBtnEl.dataset.bound) {
+    loginBtnEl.dataset.bound = '1';
+    loginBtnEl.addEventListener('click', doLogin);
+  }
+  const pwdInput = document.getElementById('loginPassword');
+  if (pwdInput && !pwdInput.dataset.bound) {
+    pwdInput.dataset.bound = '1';
+    pwdInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
+  }
   const overlay = document.getElementById('loginOverlay');
   if (overlay && overlay.dataset.requireAuth === '1' && !_tokenStore.get()) {
     overlay.classList.add('visible');
-    const loginBtnEl = document.getElementById('loginBtn');
-    if (loginBtnEl) loginBtnEl.addEventListener('click', doLogin);
-    const pwdInput = document.getElementById('loginPassword');
-    if (pwdInput) pwdInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
     return;
   }
   initApp();
