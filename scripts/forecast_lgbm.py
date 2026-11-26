@@ -21,6 +21,7 @@ import time
 import warnings
 import logging
 import traceback
+from pathlib import Path
 
 # ── Force single-threaded execution (sandbox blocks all IPC/threading) ─────
 os.environ["LOKY_MAX_CPU_COUNT"] = "1"
@@ -501,7 +502,7 @@ def build_2026_grid(df, cal26, trend_params, promo_rates):
     tp_df["Product_ID"] = tp_df["Product_ID"].astype("category")
 
     grid = grid.merge(tp_df, on=["Store_ID","Product_ID"], how="left")
-    fitted_log = grid["_intercept"].values + grid["_slope"].values * grid["day_ord"].values
+    fitted_log = np.asarray(grid["_intercept"], dtype=float) + np.asarray(grid["_slope"], dtype=float) * np.asarray(grid["day_ord"], dtype=float)
     grid["Trend_Value_2026"] = np.maximum(np.expm1(fitted_log), 0).astype(np.float32)
     grid.drop(columns=["_slope","_intercept"], inplace=True)
 

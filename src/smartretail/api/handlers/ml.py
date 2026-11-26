@@ -297,7 +297,7 @@ def train_model_from_csv(csv_text, product_name):
             if len(prod_data) == 0:
                 continue
             # 1. Daily Aggregation: group by Date and sum Sales_Qty to consolidate multiple daily transactions
-            prod_data = prod_data.groupby('Date', as_index=False)['Sales_Qty'].sum()
+            prod_data = cast(pd.DataFrame, prod_data.groupby('Date', as_index=False)['Sales_Qty'].sum())
             prod_data = prod_data.sort_values(by='Date').reset_index(drop=True)
 
             if len(prod_data) < 5:
@@ -352,7 +352,7 @@ def train_model_from_csv(csv_text, product_name):
             surrogate_id = _csv_tokenizer.get_id(p_name) or p_name
             recent_sales = list(prod_data['Sales_Qty'].astype(float).tail(14))
             last_dt = prod_data['Date'].max()
-            dow_means = prod_data.groupby(prod_data['Date'].dt.dayofweek)['Sales_Qty'].mean().to_dict()
+            dow_means = prod_data.groupby(cast(Any, prod_data['Date'].dt).dayofweek)['Sales_Qty'].mean().to_dict()
             daily_records = [
                 {"date": d.strftime("%Y-%m-%d"), "quantity": int(round(float(q)))}
                 for d, q in zip(prod_data['Date'], prod_data['Sales_Qty'])
@@ -641,7 +641,7 @@ def predict_range(product_name, start_date, end_date, mode="auto"):
                     "daily_breakdown": {k: int(round(val)) for k, val in daily_breakdowns.get(d, {}).items()}}
                    for d, v in sorted(results_by_date.items())]
         breakdown_named: dict = {}
-        accuracy_by_product: dict = {}
+        accuracy_by_product = {}
         info = get_model_info()
         mae  = info.get("metrics", {}).get("MAE", 0)
         accuracy = round(max(0, 100 - mae * 3), 1)
@@ -793,10 +793,10 @@ def handle_predict(request):
         if not ok:
             return json_response(request, {"error": err}, 400)
             
-        product = body.get("product", "")
-        start   = body.get("start_date", "")
-        end     = body.get("end_date", start)
-        mode    = body.get("mode", "auto")
+        product = str(body.get("product") or "")
+        start   = str(body.get("start_date") or "")
+        end     = str(body.get("end_date") or start)
+        mode    = str(body.get("mode") or "auto")
         
         s = datetime.strptime(start, "%Y-%m-%d")
         e = datetime.strptime(end, "%Y-%m-%d")

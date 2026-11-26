@@ -3,12 +3,12 @@ from decimal import Decimal
 from datetime import date, datetime
 
 class _JSONEncoder(json.JSONEncoder):
-    def default(self, obj):
-        if isinstance(obj, Decimal):
-            return float(obj)
-        if isinstance(obj, (datetime, date)):
-            return obj.isoformat()
-        return super().default(obj)
+    def default(self, o):
+        if isinstance(o, Decimal):
+            return float(o)
+        if isinstance(o, (datetime, date)):
+            return o.isoformat()
+        return super().default(o)
 
 # SECURITY-FIX applied: Added strict security headers (Fix 8)
 SECURITY_HEADERS = {

@@ -1,4 +1,4 @@
-"""
+r"""
 Sync CSV Products → MySQL
 =========================
 Reads files/products.csv and inserts/updates all 100 products into the

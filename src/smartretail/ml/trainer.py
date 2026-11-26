@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 
 
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
@@ -27,12 +27,12 @@ import joblib
 import joblib._parallel_backends as _pb
 import joblib.parallel as _jp
 
-class _SequentialThreading(_pb.SequentialBackend):  # type: ignore
+class _SequentialThreading(_pb.SequentialBackend):
     """Replaces threading backend with sequential to avoid sandbox pipe errors."""
     pass
 
-_pb.ThreadingBackend = _SequentialThreading  # type: ignore
-_jp.BACKENDS["threading"] = _SequentialThreading  # type: ignore
+setattr(_pb, "ThreadingBackend", _SequentialThreading)
+cast(dict[str, Any], _jp.BACKENDS)["threading"] = _SequentialThreading
 
 from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.metrics import mean_absolute_error, mean_squared_error
@@ -73,8 +73,8 @@ _state: dict[str, Any] = {}   # keys: model, trend_params, day0, metrics, split_
 
 def _fit_trend(series: pd.Series, dates: pd.Series, day0: pd.Timestamp):
     """Log-linear OLS trend per Store×Product series."""
-    day_ord = (dates - day0).dt.days.values.astype(float)  # type: ignore
-    log_y   = np.log1p(series.values.astype(float))
+    day_ord = np.asarray(pd.TimedeltaIndex(dates - day0).days, dtype=float)
+    log_y   = np.log1p(np.asarray(series, dtype=float))
     mask    = np.isfinite(log_y)
     if mask.sum() < 10:
         return 0.0, float(np.log1p(series.mean()))
@@ -112,7 +112,8 @@ def _fit_all_trends(df: pd.DataFrame, day0: pd.Timestamp) -> dict:
       (Store_ID, Product_ID) → (slope, intercept)
     """
     trend_params = {}
-    for (sid, pid), grp in df.groupby(["Store_ID", "Product_ID"], observed=True):
+    for key, grp in df.groupby(["Store_ID", "Product_ID"], observed=True):
+        sid, pid = key if isinstance(key, tuple) else (key, "")
         slope, intercept = _fit_trend(grp["Units_Sold"], grp["Date"], day0)
         trend_params[(str(sid), str(pid))] = (slope, intercept)
     return trend_params
@@ -121,14 +122,14 @@ def _fit_all_trends(df: pd.DataFrame, day0: pd.Timestamp) -> dict:
 def _add_residuals(df: pd.DataFrame, trend_params: dict, day0: pd.Timestamp) -> pd.DataFrame:
     """Add Trend_Value and Residual columns."""
     df = df.copy()
-    day_ord = (df["Date"] - day0).dt.days.values.astype(float)  # type: ignore
+    day_ord = np.asarray(pd.TimedeltaIndex(df["Date"] - day0).days, dtype=float)
 
     slopes      = np.zeros(len(df), dtype=float)
     intercepts  = np.zeros(len(df), dtype=float)
     for (sid, pid), (slope, intercept) in trend_params.items():
-        mask = (df["Store_ID"] == sid) & (df["Product_ID"] == pid)
-        slopes[mask.values]     = slope
-        intercepts[mask.values] = intercept
+        mask = ((df["Store_ID"] == sid) & (df["Product_ID"] == pid)).to_numpy(dtype=bool)
+        slopes[mask]     = slope
+        intercepts[mask] = intercept
 
     df["Trend_Value"] = np.maximum(np.expm1(intercepts + slopes * day_ord), 0)
     df["Residual"]    = df["Units_Sold"].astype(float) - df["Trend_Value"]
@@ -150,11 +151,12 @@ def _encode_cats(df: pd.DataFrame) -> pd.DataFrame:
 def _build_features(df: pd.DataFrame) -> pd.DataFrame:
     """Add calendar and annual lag features."""
     df = df.copy()
-    df["day_of_week"]  = df["Date"].dt.dayofweek.astype("int8")  # type: ignore
-    df["month"]        = df["Date"].dt.month.astype("int8")  # type: ignore
-    df["day_of_month"] = df["Date"].dt.day.astype("int8")  # type: ignore
-    df["year"]         = df["Date"].dt.year.astype("int16")  # type: ignore
-    df["week_of_year"] = df["Date"].dt.isocalendar().week.astype("int16")  # type: ignore
+    date_idx = pd.DatetimeIndex(df["Date"])
+    df["day_of_week"]  = date_idx.dayofweek.astype("int8")
+    df["month"]        = date_idx.month.astype("int8")
+    df["day_of_month"] = date_idx.day.astype("int8")
+    df["year"]         = date_idx.year.astype("int16")
+    df["week_of_year"] = date_idx.isocalendar().week.to_numpy(dtype="int16")
 
     # Annual lag (365-day look-back residual)
     df = df.sort_values(["Store_ID", "Product_ID", "Date"])
@@ -228,10 +230,10 @@ def train(test_size: float = 0.2) -> dict:
     # 5. Train model
     logger.info("Training HistGradientBoostingRegressor …")
     feat_cols_present = [c for c in FEAT_COLS if c in train_df.columns]
-    X_train = train_df[feat_cols_present].values
-    y_train = train_df["Residual"].values
-    X_test  = test_df[feat_cols_present].values
-    y_test  = test_df["Units_Sold"].values
+    X_train = train_df[feat_cols_present].to_numpy(dtype=float)
+    y_train = np.asarray(train_df["Residual"], dtype=float)
+    X_test  = test_df[feat_cols_present].to_numpy(dtype=float)
+    y_test  = np.asarray(test_df["Units_Sold"], dtype=float)
 
     model = HistGradientBoostingRegressor(
         loss="absolute_error",
@@ -250,7 +252,7 @@ def train(test_size: float = 0.2) -> dict:
 
     # 6. Evaluate on test set
     resid_pred  = model.predict(X_test)
-    trend_test  = test_df["Trend_Value"].values
+    trend_test  = np.asarray(test_df["Trend_Value"], dtype=float)
     units_pred  = np.maximum(trend_test + resid_pred, 0)
 
     mae  = mean_absolute_error(y_test, units_pred)
@@ -263,7 +265,7 @@ def train(test_size: float = 0.2) -> dict:
         .mean().reset_index().rename(columns={"Units_Sold":"naive_pred"})
     )
     test_with_naive = test_df.merge(naive_lookup, on=["Store_ID","Product_ID","month","day_of_month"], how="left")
-    naive_pred_vals = test_with_naive["naive_pred"].fillna(test_df["Units_Sold"].mean()).values
+    naive_pred_vals = np.asarray(test_with_naive["naive_pred"].fillna(test_df["Units_Sold"].mean()), dtype=float)
     baseline_mae = mean_absolute_error(y_test, naive_pred_vals)
 
     improvement = (baseline_mae - mae) / baseline_mae * 100

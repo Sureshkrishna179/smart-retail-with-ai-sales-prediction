@@ -22,8 +22,15 @@ Capabilities:
 import io
 import json
 import logging
+import sys
 import time
-from typing import Dict, List, Tuple
+from pathlib import Path
+from typing import Any, Dict, List, Tuple, cast
+
+# Ensure 'src' is importable when running this module directly
+_src_dir = str(Path(__file__).resolve().parents[2])
+if _src_dir not in sys.path:
+    sys.path.insert(0, _src_dir)
 
 import pandas as pd
 import numpy as np
@@ -134,14 +141,15 @@ def transform_and_enforce_contract(
 
     # 3.5: Resilient datetime standardization
     # Handles ISO8601, US/UK dates ('2026-05-12', '12/05/2026', 'May 12 2026')
-    df["date"] = pd.to_datetime(df["date"], format="mixed", errors="coerce")
+    date_series = cast(pd.Series, pd.to_datetime(df["date"], format="mixed", errors="coerce"))
+    df["date"] = date_series
 
     # 3.6: Strict numeric coercion for quantity
     df["quantity_sold"] = pd.to_numeric(df["quantity_sold"], errors="coerce")
 
     # 3.7: Drop rows with unrecoverable primary keys
     valid_mask = (
-        df["date"].notna()
+        date_series.notna()
         & df["product_id"].notna()
         & (df["product_id"].astype(str).str.strip() != "")
     )
@@ -150,7 +158,7 @@ def transform_and_enforce_contract(
     # 3.8: Fill safe defaults and finalize types
     df["quantity_sold"] = df["quantity_sold"].fillna(0.0).round().astype(int)
     df["product_id"] = df["product_id"].astype(str).str.strip()
-    df["date"] = df["date"].dt.strftime("%Y-%m-%d")
+    df["date"] = cast(Any, df["date"].dt).strftime("%Y-%m-%d")
 
     dropped_rows = initial_rows - len(df)
     return df, dropped_rows

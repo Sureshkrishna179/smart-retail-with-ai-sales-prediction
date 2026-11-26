@@ -62,7 +62,7 @@ def handle_toggle_user(request):
         if not ok:
             return json_response(request, {"error": err}, 400)
             
-        uid = int(body.get("user_id"))
+        uid = int(body.get("user_id", 0))
         try:
             db_query("UPDATE users SET is_active = NOT is_active WHERE id=%s", (uid,), fetch=False)
             user = db_query("SELECT id, username, is_active FROM users WHERE id=%s", (uid,))

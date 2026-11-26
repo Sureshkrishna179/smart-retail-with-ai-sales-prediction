@@ -26,7 +26,7 @@ def handle_restock(request):
         if not ok:
             return json_response(request, {"error": err}, 400)
             
-        pid = int(body.get("product_id"))
+        pid = int(body.get("product_id", 0))
         qty = int(body.get("quantity", 50))
         
         try:
