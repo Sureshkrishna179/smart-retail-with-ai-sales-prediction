@@ -54,8 +54,25 @@ def test_login_invalid_credentials(api_server, requires_mysql):
 
 @pytest.mark.integration
 def test_login_valid_admin(api_server, requires_mysql):
-    status, data = _post(f"{api_server}/api/login", {"username": "admin", "password": "admin123"})
-    assert status == 200
-    assert data.get("success") is True
-    assert data.get("token")
-    assert data["user"]["role"] == "Admin"
+    from smartretail.db.connection import db_query
+    from smartretail.services.auth_service import hash_password_pbkdf2
+
+    test_user = "ci_test_admin"
+    test_pw = "TestAdmin#2026!"
+    pw_hash = hash_password_pbkdf2(test_pw)
+
+    db_query(
+        "INSERT INTO users (username, password_hash, role, is_active) "
+        "VALUES (%s, %s, 'Admin', TRUE) "
+        "ON DUPLICATE KEY UPDATE password_hash=VALUES(password_hash), role='Admin', is_active=TRUE",
+        (test_user, pw_hash),
+        fetch=False,
+    )
+    try:
+        status, data = _post(f"{api_server}/api/login", {"username": test_user, "password": test_pw})
+        assert status == 200
+        assert data.get("success") is True
+        assert data.get("token")
+        assert data["user"]["role"] == "Admin"
+    finally:
+        db_query("UPDATE users SET is_active=FALSE WHERE username=%s", (test_user,), fetch=False)
