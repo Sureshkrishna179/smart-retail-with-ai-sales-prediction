@@ -109,6 +109,7 @@ jobs:
 
       - name: Setup database
         env:
+          PYTHONPATH: src
           DB_HOST: 127.0.0.1
           DB_USER: root
           DB_PASSWORD: testpass
@@ -123,7 +124,13 @@ jobs:
 
       - name: Integration tests
         env:
+          PYTHONPATH: src
           RUN_INTEGRATION_TESTS: "1"
+          DB_HOST: 127.0.0.1
+          DB_USER: root
+          DB_PASSWORD: testpass
+          DB_NAME: retail_sales_db
+          REQUIRE_AUTH: "0"
         run: pytest tests -m integration
 
   # ─── Deploy to GCP (main branch only) ──────────────────────────

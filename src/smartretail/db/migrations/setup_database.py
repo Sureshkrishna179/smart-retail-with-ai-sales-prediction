@@ -5,14 +5,21 @@ Supports auto-migration (safe to run multiple times).
 """
 
 import os
+import sys
 import csv
 import hashlib
 import secrets
 import random
 from datetime import datetime, timedelta
+from pathlib import Path
 from dotenv import load_dotenv
 import mysql.connector
 from mysql.connector import Error
+
+# Ensure 'src' is on sys.path when executed directly (e.g. python src/smartretail/db/migrations/setup_database.py)
+_src_dir = str(Path(__file__).resolve().parents[3])
+if _src_dir not in sys.path:
+    sys.path.insert(0, _src_dir)
 
 from paths import ENV_FILE, GROCERY_CSV, PROJECT_ROOT
 
