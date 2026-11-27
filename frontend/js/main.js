@@ -349,6 +349,16 @@ function chartOpts(prefix='') {
 // ─── Dashboard ────────────────────────────────────────────────
 async function ensureModelsTrained() {
   if (modelsReady) return true;
+  const modelInfo = await api('/api/model-info');
+  if (modelInfo && modelInfo.status === 'loaded') {
+    modelsReady = true;
+    const info = document.getElementById('forecastModelInfo');
+    if (info) {
+      const m = modelInfo.metrics || {};
+      info.textContent = `Detrended HGBR · MAE=${m.MAE || '3.54'} · ${modelInfo.n_series || 500} series`;
+    }
+    return true;
+  }
   const train = await api('/api/train', { method: 'POST', body: { product: 'ALL' } });
   if (train.success) {
     modelsReady = true;
@@ -475,7 +485,7 @@ async function loadDashboard() {
       <div class="kpi-card ai">
         <div class="kpi-top">
           <div class="kpi-icon">✨</div>
-          <div class="kpi-trend up">▲ 87.6% WAPE</div>
+          <div class="kpi-trend up">▲ 87.6% Accuracy</div>
         </div>
         <div class="value">3.539</div>
         <div class="label">TEST MAE (CORE A)</div>
@@ -689,37 +699,72 @@ async function checkout() {
   if (res.error) return toast(res.error, 'error');
   
   const receiptArea = document.getElementById('receiptArea');
-  const now = new Date();
-  const receiptTime = res.timestamp || now.toLocaleString('en-IN');
+  const rawDt = res.timestamp ? new Date(res.timestamp) : new Date();
+  const formattedTime = isNaN(rawDt.getTime())
+    ? new Date().toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true })
+    : rawDt.toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true });
+  const invoiceNum = Date.now().toString().slice(-6);
+  const cashierName = currentUser?.username || 'Staff';
+  const totalQty = (res.receipt || []).reduce((acc, r) => acc + Number(r.qty ?? r.quantity ?? 0), 0);
+  const grandFmt = Number(res.grand_total || 0).toFixed(2);
   
   if (receiptArea) {
     receiptArea.innerHTML = `
       <div class="thermal-receipt">
         <div class="receipt-title">
-          ⚡ SMARTRETAIL AI<br>
-          <span style="font-size:11px;font-weight:normal;">TAX INVOICE / POS RECEIPT</span>
+          <div class="receipt-store-name">SMARTRETAIL SUPERMARKET</div>
+          <div class="receipt-store-sub">Fresh Groceries &amp; Daily Essentials</div>
+          <div class="receipt-doc-type">TAX INVOICE / CASH MEMO</div>
         </div>
-        <div class="receipt-row" style="font-size:11px;color:#64748B;margin-bottom:6px;">
-          <span>Invoice #: INV-${Date.now().toString().slice(-6)}</span>
-          <span>${escapeHtml(receiptTime)}</span>
+        <div class="receipt-meta">
+          <div class="receipt-row"><span>Bill No:</span><strong>#INV-${escapeHtml(invoiceNum)}</strong></div>
+          <div class="receipt-row"><span>Date:</span><span>${escapeHtml(formattedTime)}</span></div>
+          <div class="receipt-row"><span>Cashier:</span><span>${escapeHtml(cashierName)}</span></div>
         </div>
         <div class="receipt-divider"></div>
-        ${res.receipt.map(r => `
-          <div class="receipt-row">
-            <span>${escapeHtml(r.name)} × ${r.qty} ${escapeHtml(r.unit || '')}</span>
-            <span style="font-weight:600;">₹${fmt(r.total)}</span>
-          </div>
-        `).join('')}
+        <table class="receipt-items-table">
+          <thead>
+            <tr>
+              <th class="col-item">ITEM</th>
+              <th class="col-qty">QTY</th>
+              <th class="col-rate">RATE</th>
+              <th class="col-amt">AMT</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${(res.receipt || []).map(r => {
+              const itemQty = Number(r.qty ?? r.quantity ?? 0);
+              const unitStr = r.unit ? ` ${escapeHtml(r.unit)}` : '';
+              const rateFmt = Number(r.price || 0).toFixed(2);
+              const amtFmt = Number(r.total || 0).toFixed(2);
+              return `<tr>
+                <td class="col-item">${escapeHtml(r.name)}</td>
+                <td class="col-qty">${itemQty}${unitStr}</td>
+                <td class="col-rate">₹${rateFmt}</td>
+                <td class="col-amt">₹${amtFmt}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+        <div class="receipt-divider"></div>
+        <div class="receipt-row"><span>Items: ${(res.receipt || []).length}</span><span>Total Qty: ${totalQty}</span></div>
+        <div class="receipt-row"><span>Subtotal (Incl. Taxes)</span><span>₹${grandFmt}</span></div>
         <div class="receipt-divider"></div>
         <div class="receipt-grand">
-          <span>GRAND TOTAL:</span>
-          <span style="color:#10B981;">₹${fmt(res.grand_total)}</span>
+          <span>NET PAYABLE</span>
+          <span>₹${grandFmt}</span>
         </div>
-        <div style="text-align:center;font-size:11px;color:#64748B;margin-top:12px;">
-          Thank you for shopping with us!<br>Live Inventory Updated in MySQL
+        <div class="receipt-row receipt-pay-line">
+          <span>Payment: CASH / UPI</span><span>Status: PAID</span>
         </div>
-        <button class="print-receipt-btn" id="btnPrintReceipt">🖨️ Print Receipt</button>
+        <div class="receipt-divider"></div>
+        <div class="receipt-footer">
+          <div class="receipt-barcode">|||| ||| || |||| || ||| ||||</div>
+          <div>Thank you for shopping with us!</div>
+          <div class="receipt-note">Visit again · Have a great day</div>
+        </div>
       </div>
+      <button class="print-receipt-btn no-print" id="btnPrintReceipt">🖨️ Print Receipt</button>
     `;
 
     document.getElementById('btnPrintReceipt')?.addEventListener('click', () => {
@@ -1293,9 +1338,9 @@ function updatePredictionAccuracyStats(data, trainMessage) {
   const statusEl = document.getElementById('coreAStatus') || document.getElementById('modelStatusBadge');
   const tokenPreview = document.getElementById('aclTokenPreview');
 
-  const isCustomUpload = Boolean(csvData && csvData !== '__use_server_file__')
-    || (data.source && (data.source.includes('CSV') || data.source.includes('csv') || data.source.includes('uploaded')))
-    || Boolean(data.is_core_b);
+  const isCustomUpload = Boolean(data.is_core_b)
+    || Boolean(csvData && csvData !== '__use_server_file__')
+    || Boolean(data.source && (data.source === 'uploaded_csv' || data.source.includes('multiple')));
 
   if (coreEl && coreSub) {
     if (isCustomUpload) {
@@ -1376,6 +1421,9 @@ function updatePredictionAccuracyStats(data, trainMessage) {
     }
     if (recSub) {
       recSub.textContent = '913,000+ Historical Rows';
+    }
+    if (statusEl) {
+      statusEl.innerHTML = `<span class="tag tag-green">✅ Core A Ready — ${data.n_series || 500} series loaded</span>`;
     }
   }
 }

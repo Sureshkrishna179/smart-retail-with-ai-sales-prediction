@@ -29,6 +29,8 @@ _PRODUCTS: List[Dict[str, Any]] = []
 _USERS: List[Dict[str, Any]] = []
 _INVENTORY_LOG: List[Dict[str, Any]] = []
 _AUDIT_LOG: List[Dict[str, Any]] = []
+_INMEMORY_ORDERS_TODAY: int = 12
+_INMEMORY_REVENUE_TODAY: float = 48250.0
 _INITIALIZED = False
 _store_lock = threading.RLock()
 
@@ -187,6 +189,7 @@ def restock_inmemory_product(product_id: int, quantity: int) -> Optional[Dict[st
 
 
 def bill_inmemory_products(items: List[Dict[str, Any]]) -> Dict[str, Any]:
+    global _INMEMORY_ORDERS_TODAY, _INMEMORY_REVENUE_TODAY
     _init_store()
     receipt = []
     grand = 0.0
@@ -224,6 +227,10 @@ def bill_inmemory_products(items: List[Dict[str, Any]]) -> Dict[str, Any]:
                 "total": total,
             })
 
+    with _store_lock:
+        _INMEMORY_ORDERS_TODAY += 1
+        _INMEMORY_REVENUE_TODAY = round(_INMEMORY_REVENUE_TODAY + grand, 2)
+
     return {
         "success": True,
         "receipt": receipt,
@@ -236,6 +243,9 @@ def get_inmemory_reports() -> Dict[str, Any]:
     _init_store()
     total = len(_PRODUCTS)
     low = sum(1 for p in _PRODUCTS if p["current_stock"] < p["min_stock_level"])
+    orders_today = _INMEMORY_ORDERS_TODAY
+    today_rev = _INMEMORY_REVENUE_TODAY
+    avg_order = round(today_rev / orders_today, 2) if orders_today > 0 else 0.0
 
     # 12-month historical revenue progression
     monthly = [
@@ -261,7 +271,9 @@ def get_inmemory_reports() -> Dict[str, Any]:
     return {
         "monthly_revenue": monthly,
         "top_products": top_prods,
-        "today_revenue": 48250.0,
+        "today_revenue": today_rev,
+        "orders_today": orders_today,
+        "avg_order_value": avg_order,
         "yesterday_revenue": 42100.0,
         "total_revenue": 2154950.0,
         "stock_summary": {"total": total, "low": low},

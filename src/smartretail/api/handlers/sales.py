@@ -86,15 +86,20 @@ def handle_get_reports(request):
             FROM sales s JOIN products p ON s.product_id=p.id
             GROUP BY p.id ORDER BY total_revenue DESC LIMIT 10
         """)
-        today_rev = db_query("SELECT COALESCE(SUM(total_amount),0) as rev FROM sales WHERE DATE(sale_date)=CURDATE()")
+        today_rev = db_query("SELECT COALESCE(SUM(total_amount),0) as rev, COUNT(DISTINCT created_at) as orders FROM sales WHERE DATE(sale_date)=CURDATE()")
         total_rev = db_query("SELECT COALESCE(SUM(total_amount),0) as rev FROM sales")
         stock_count = db_query("SELECT COUNT(*) as total, SUM(CASE WHEN current_stock < min_stock_level THEN 1 ELSE 0 END) as low FROM products")
         
         if stock_count and stock_count[0]["total"] > 0:
+            today_val = float(today_rev[0]["rev"]) if today_rev else 0.0
+            orders_today = int(today_rev[0]["orders"]) if today_rev else 0
+            avg_order_value = round(today_val / orders_today, 2) if orders_today > 0 else 0.0
             return json_response(request, {
                 "monthly_revenue": monthly or [], 
                 "top_products": top_products or [],
-                "today_revenue": float(today_rev[0]["rev"]) if today_rev else 0,
+                "today_revenue": today_val,
+                "orders_today": orders_today,
+                "avg_order_value": avg_order_value,
                 "total_revenue": float(total_rev[0]["rev"]) if total_rev else 0,
                 "stock_summary": stock_count[0] if stock_count else {}
             })

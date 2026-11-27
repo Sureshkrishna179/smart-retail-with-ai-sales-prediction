@@ -22,26 +22,41 @@ Small-format Indian supermarkets face sharp demand spikes around regional festiv
 
 ---
 
+## 📸 Live Dashboard Preview
+
+**Sales Dashboard — Live MySQL KPIs, 7-Day AI Sales Forecast & Stock Alerts**
+![Sales Dashboard](docs/images/dashboard.png)
+
+**AI Sales Predictions — Core A Detrended HGBR-v2 (500 Series, 913K+ Rows) & Projection Curve**
+![AI Sales Predictions](docs/images/ai-predictions.png)
+
+**POS Billing — Live Cart, Order KPIs & Printable 80mm-Style Thermal Tax Invoice**
+![POS Billing & Receipt](docs/images/pos-billing.png)
+
+**Cultural Demand Engine — Tamil Nadu & National Festival Multipliers (±5d Event Windows)**
+![Festival Calendar](docs/images/festival-calendar.png)
+
+---
+
 ## 🏗️ System Architecture
 
 ```text
-┌─────────────────────────────────────┐         ┌───────────────────────────────────────────────┐
-│  Frontend SPA (frontend/)           │  HTTP   │  Backend — Python ThreadingHTTPServer (8765)  │
-│  • dashboard.html (Dark/Light UI)   │────────▶│  • Zero web framework dependencies (stdlib)   │
-│  • js/main.js & Chart.js 4.4        │◀────────│  • 21 REST Endpoints + Router + Rate Limiter  │
-│  • css/styles.css                   │  JSON   │  • PyJWT Auth + RBAC + Input Validators       │
-└─────────────────────────────────────┘         └───────────────────────┬───────────────────────┘
-                                                                        │
-          ┌─────────────────────────────┬───────────────────────────────┼─────────────────────────────┐
-          ▼                             ▼                               ▼                             ▼
-┌───────────────────┐       ┌───────────────────────┐       ┌───────────────────────┐     ┌───────────────────────┐
-│  Dual-Core ML     │       │  Festival & Calendar  │       │  Universal ETL        │     │  MySQL 8.0 + Fallback │
-│  • Core A: HGBR   │       │  • 30 ML Event Windows│       │  • .csv/.xlsx/.json   │     │  • Connection Pool(5) │
-│    (15 features)  │       │  • 35 DB Seed Events  │       │  • Dynamic Col Map    │     │  • 6 Core Tables +    │
-│  • Core B: RF     │       │  • ±5-Day Windows     │       │  • 50MB In-Memory     │     │    Sales_History      │
-│    (10 features + │       │  • Weekend Stacking   │       │  • Bulk Upsert        │     │  • In-Memory Store    │
-│    UPxxx Token)   │       │    (+15% Compound)    │       │    (5,000-row batch)  │     │    (Zero-DB Fallback) │
-└───────────────────┘       └───────────────────────┘       └───────────────────────┘     └───────────────────────┘
+┌──────────────────────────────┐        ┌─────────────────────────────────────────┐
+│ Frontend SPA (frontend/)     │  HTTP  │ Backend: Python ThreadingHTTPServer     │
+│ • dashboard.html (Dark/Light)│───────▶│ • Zero web-framework deps (port 8765)   │
+│ • main.js + Chart.js 4.4     │◀───────│ • 21 REST routes + Rate Limiter         │
+│ • css/styles.css             │  JSON  │ • PyJWT Auth + RBAC + Input Validators  │
+└──────────────────────────────┘        └────────────────────┬────────────────────┘
+                                                             │
+     ┌───────────────────────┬───────────────────────────────┼───────────────────────┐
+     ▼                       ▼                               ▼                       ▼
+┌───────────────┐   ┌───────────────────┐   ┌───────────────────────┐   ┌───────────────────┐
+│ Dual-Core ML  │   │ Festival Engine   │   │ Universal ETL         │   │ MySQL 8 + Fallback│
+│ • Core A:HGBR │   │ • 30 ML Windows   │   │ • .csv/.xlsx/.json    │   │ • Pool(5), 6 Core │
+│   (15 feats)  │   │ • 35 DB Festivals │   │ • Dynamic Col Map     │   │   + Sales_History │
+│ • Core B: RF  │   │ • ±5-Day Windows  │   │ • 50MB In-Memory      │   │ • In-Memory Store │
+│   (10+UPxxx)  │   │ • +15% Weekends   │   │ • 5K-row Batch Upsert │   │   (Zero-DB Mode)  │
+└───────────────┘   └───────────────────┘   └───────────────────────┘   └───────────────────┘
 ```
 
 ---
@@ -144,6 +159,9 @@ Open **`http://localhost:8765/`** in your browser *(do not open `frontend/dashbo
 
 All `/api/*` routes pass through sliding-window rate limiting (`60 req/min` default, `5 req/min` default on `/api/login` unless configured otherwise in `.env`), CORS origin filtering, HTTP security headers, and JWT/RBAC enforcement (`REQUIRE_AUTH=1`).
 
+<details>
+<summary>View all 21 REST API endpoints</summary>
+
 | Domain | Endpoints | Roles | Key Responsibilities |
 |--------|-----------|-------|----------------------|
 | **Auth** | `POST /api/login` | Public | PBKDF2-HMAC-SHA256 verification + PyJWT (`HS256`) token issuance (with in-memory demo fallback) |
@@ -154,6 +172,8 @@ All `/api/*` routes pass through sliding-window rate limiting (`60 req/min` defa
 | **Users & Audit** | `GET /api/users`, `POST /api/create-user`, `POST /api/toggle-user`, `GET /api/audit-log` | Admin | Staff account management (strong password enforcement) & last-50 audit log view |
 | **System** | `GET /api/db-status`, `GET /api/festivals`, `GET /api/products-csv` | Auth | MySQL health status, festival multiplier calendar, benchmark SKU catalog |
 | **Universal ETL** | `POST /api/v1/etl/upload` | Auth | Multipart stream upload (`.csv`, `.xlsx`, `.xls`, `.json`, max 50MB) → normalized `Sales_History` upsert |
+
+</details>
 
 ---
 
@@ -190,8 +210,11 @@ See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for step-by-step Render, Koyeb, f
 
 ## 📁 Project Structure
 
+<details>
+<summary>Expand full repository layout (see also <code>docs/PROJECT_STRUCTURE.md</code>)</summary>
+
 ```text
-Project AI Sales/
+smart-retail-with-ai-sales-prediction/
 ├── server.py                              # Root single-command launcher (adds src/ to sys.path)
 ├── run.bat                                # Windows double-click / cmd launcher (py -3 server.py)
 ├── Dockerfile                             # python:3.11-slim non-root container + /dashboard.html healthcheck
@@ -243,9 +266,11 @@ Project AI Sales/
 │   └── output/                            # Pre-trained sales_forecaster.model & evaluation_report.txt
 ├── scripts/                               # Launchers (start.ps1/bat), test runners, DB dump/cloud migration, CSV generators
 ├── tests/                                 # 8 test modules (43 tests: unit + optional MySQL integration)
-├── docs/                                  # COMPANY_STANDARDS.md, DEPLOYMENT.md, PROJECT_STRUCTURE.md, TESTING.md
+├── docs/                                  # Architecture/deployment guides & live screenshots (`images/`)
 └── .github/workflows/ci.yml               # GitHub Actions: pytest, Bandit/pip-audit/Trivy, MySQL 8.0 integration, Cloud Run deploy
 ```
+
+</details>
 
 ---
 
